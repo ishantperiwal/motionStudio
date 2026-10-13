@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Showcase – Affinity SVG × PixiJS × Three.js</title>
+<script type="importmap">{"imports":{"gsap":"/vendor/gsap/index.js","gsap/":"/vendor/gsap/","pixi.js":"/vendor/pixi.js/dist/pixi.mjs","three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","@studio/":"/runtime/"}}</script>
+<link rel="stylesheet" href="/runtime/stage.css">
+<style>
+  #stage { --stage-bg: #E8F1FF; color: #1F1F20; }
+  #title { left: 120px; top: 96px; font-size: 56px; font-weight: 700; letter-spacing: -.5px; z-index: 10; }
+  #sub { left: 122px; top: 172px; font-size: 22px; color: #5B6472; z-index: 10; }
+  #menu { left: 1130px; top: 210px; z-index: 10; filter: drop-shadow(0 30px 60px rgba(28, 58, 110, .14)); }
+  #cursors { left: 0; top: 0; z-index: 30; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="title" class="a" data-name="Title">Motion Studio showcase</div>
+  <div id="sub" class="a" data-name="Subtitle">Affinity SVG · PixiJS particles · Three.js extrusion — one clock</div>
+  <div id="menu" class="a"></div>
+  <div id="cursors" class="a"></div>
+</div>
+<script type="module" src="scene.js"></script>
+</body>
+</html>

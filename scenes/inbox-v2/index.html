@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inbox v2 – Shared inbox explainer</title>
+<script type="importmap">{"imports":{"gsap":"/vendor/gsap/index.js","gsap/":"/vendor/gsap/","roughjs":"/vendor/roughjs/bundled/rough.esm.js","pixi.js":"/vendor/pixi.js/dist/pixi.mjs","three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","@studio/":"/runtime/"}}</script>
+<link rel="stylesheet" href="/runtime/stage.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage">
+  <div id="cam">
+    <div id="winFrame" class="a"></div>
+    <div id="win" class="a"></div>
+    <div id="cursors" class="a"></div>
+  </div>
+  <div id="hero" data-name="Hero – address"><div class="addr"></div><div class="sub">One shared inbox for the whole team</div></div>
+  <div id="titles"></div>
+  <div id="endcard" data-name="End card">
+    <div class="mark"><svg viewBox="0 0 48 36"><rect x="1" y="1" width="46" height="34" rx="7" fill="#2170F4"/><path d="M7 8 24 21 41 8" fill="none" stroke="#fff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div class="name"></div>
+    <div class="line"></div>
+  </div>
+</div>
+<script type="module" src="scene.js"></script>
+</body>
+</html>

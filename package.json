@@ -1,0 +1,22 @@
+{
+  "name": "motion-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Code-driven motion design with a frame-targeted feedback editor.",
+  "scripts": {
+    "dev": "node server/dev.mjs",
+    "render": "node render/render.mjs",
+    "probe": "node render/probe.mjs",
+    "new-scene": "node tools/new-scene.mjs"
+  },
+  "dependencies": {
+    "gsap": "^3.13.0",
+    "pixi.js": "^8.6.6",
+    "roughjs": "^4.6.6",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

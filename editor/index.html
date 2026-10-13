@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Motion Studio</title>
+<link rel="stylesheet" href="editor.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">Motion Studio</div>
+  <select id="scenePick" title="Scene"></select>
+  <button id="playBtn" title="Play / pause (Space)">▶</button>
+  <div id="readout"><b id="frameNo">0</b><span id="frameTot">/ 0</span><span id="secs">0.00s</span></div>
+  <div id="rangeOut" class="muted"></div>
+  <div id="rec" title="Hold Shift while scrubbing to record a span note">● REC</div>
+  <div class="spacer"></div>
+  <button id="exportBtn" title="Export MP4: 1080p, motion blur, high quality">⤓ Export MP4</button>
+  <button id="sendBtn" class="send" title="Ask Claude to work the open notes now">▶ Send to Claude</button>
+  <button id="loopBtn" class="toggle" title="Loop the in/out range (L)">Loop</button>
+  <a id="openScene" target="_blank" title="Open the scene on its own">↗</a>
+</header>
+
+<main>
+  <section id="viewWrap">
+    <div id="view">
+      <iframe id="frame" title="scene"></iframe>
+      <div id="overlay"></div>
+    </div>
+    <div id="tools">
+        <button id="commentBtn" title="Spot note (S): drag a tight box around what you mean, or click a spot"><span>✎</span>Spot</button>
+      </div>
+    <div id="hint" class="muted">Space play · ←/→ step (⌥ ×10) · hold ⇧ while scrubbing to record a span · S spot note — box what you mean · drag the top row to mark a span · L loop · X clear span · ⌘C copy note · −/+ zoom timeline · ⌫ remove selected note</div>
+  </section>
+
+  <aside id="side"><div id="panel"></div></aside>
+</main>
+
+<footer id="tl">
+  <div id="zoom" title="Timeline zoom: pinch or ⌘-scroll on the timeline · ⇧-scroll to move · − / + / 0 keys">
+    <button id="zoomMinus">−</button><button id="zoomOut" title="Back to the default view">30s</button><button id="zoomIn">+</button><button id="zoomAll" title="Whole video">All</button>
+  </div>
+  <div id="ruler"></div>
+  <div id="lanes"></div>
+  <div id="playhead"></div>
+  <div id="rangeBox"></div>
+</footer>
+
+<script type="module" src="editor.js"></script>
+</body>
+</html>

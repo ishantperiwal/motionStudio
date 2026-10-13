@@ -1,0 +1,107 @@
+#stage { --stage-bg: #E8F1FF; color: #1F1F20; }
+#cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+
+/* ---------- window ---------- */
+#win {
+  position: absolute; left: 100px; top: 50px; width: 1720px; height: 980px;
+  background: #fff; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 40px 90px rgba(28, 58, 110, .16), 0 8px 24px rgba(28, 58, 110, .08);
+}
+.titlebar { left: 0; top: 0; width: 1720px; height: 44px; background: #000; z-index: 30; }
+.tl-dot { top: 16px; width: 12px; height: 12px; border-radius: 50%; }
+
+/* skeleton */
+.bar { position: absolute; border-radius: 99px; background: #E1E4E8; }
+.sq { position: absolute; border-radius: 5px; }
+
+/* avatars */
+.av { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; font-weight: 600; flex: none; }
+.av b { display: block; line-height: 1; font-weight: 600; }
+
+/* ---------- sidebar ---------- */
+#sidebar { left: 0; top: 44px; width: 360px; height: 936px; background: #1F1F20; z-index: 10; }
+.logo { left: 72px; top: 27px; font-size: 30px; line-height: 38px; font-weight: 700; color: #fff; letter-spacing: .3px; }
+.side-item { left: 20px; width: 320px; height: 40px; border-radius: 8px; }
+.inbox-item { background: #333; }
+.inbox-item .lbl { position: absolute; left: 46px; top: 0; line-height: 40px; font-size: 19px; font-weight: 500; color: #fff; }
+.badge { right: 14px; top: 13px; width: 28px; height: 14px; border-radius: 7px; background: #E5484D; }
+
+/* ---------- top bar / headers ---------- */
+.hline { height: 1px; background: #E6E6E6; }
+.vline { width: 1px; background: #E6E6E6; }
+.list-title { left: 384px; top: 136px; line-height: 92px; font-size: 30px; font-weight: 600; }
+
+/* ---------- list ---------- */
+#listBody { left: 0; top: 229px; width: 980px; height: 751px; overflow: hidden; z-index: 2; }
+.row { position: absolute; left: 376px; width: 588px; height: 140px; border-radius: 12px; background: #F5F6F8; }
+.cb { position: absolute; left: 22px; top: 23px; width: 22px; height: 22px; border: 2px solid #C9CDD3; border-radius: 6px; background: #fff; }
+.subj { position: absolute; left: 62px; top: 21px; height: 26px; line-height: 26px; font-size: 21px; font-weight: 600; display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.udot { width: 10px; height: 10px; border-radius: 50%; background: #2170F4; flex: none; }
+.date { left: 522px; top: 27px; width: 42px; height: 14px; }
+.l1 { left: 62px; top: 67px; height: 16px; background: #DADEE3; }
+.l2 { left: 62px; top: 101px; height: 14px; background: #E6E9EC; }
+.chip {
+  position: absolute; right: 24px; top: 92px; height: 32px; border-radius: 16px; background: #fff;
+  border: 1px solid #DDD; overflow: hidden;
+}
+.chip-l { position: absolute; right: 0; top: 0; height: 30px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px 0 6px; font-size: 15px; font-weight: 500; white-space: nowrap; }
+.chip-l.na { padding-left: 14px; gap: 6px; }
+
+/* ---------- reading pane ---------- */
+#empty { left: 1230px; top: 504px; width: 240px; height: 200px; }
+#vp {
+  left: 981px; top: 229px; width: 739px; height: 639px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 52px, #000 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 52px, #000 100%);
+}
+#thread { position: absolute; left: 39px; top: 0; width: 660px; height: 1200px; }
+.title { left: 0; top: 32px; line-height: 40px; font-size: 30px; font-weight: 600; white-space: nowrap; }
+
+.card { position: absolute; left: 0; width: 660px; background: #fff; border: 1px solid #DDD; border-radius: 12px; }
+.card .hd { position: relative; height: 88px; }
+.card .hd .av { position: absolute; left: 24px; top: 24px; }
+.card .nm { position: absolute; left: 84px; top: 25px; line-height: 24px; font-size: 21px; font-weight: 600; }
+.card .sub { position: absolute; left: 84px; top: 52px; line-height: 20px; font-size: 15px; color: #6B7280; }
+.card .tm { position: absolute; right: 24px; top: 27px; line-height: 20px; font-size: 15px; color: #6B7280; white-space: nowrap; }
+.card .bd { padding: 0 24px; font-size: 19px; line-height: 30px; overflow: hidden; }
+.card .sp { height: 20px; }
+.card .dv { height: 1px; background: #E6E6E6; }
+.card .ft { position: relative; height: 64px; }
+.ft-l { position: absolute; left: 24px; right: 24px; top: 0; height: 64px; display: flex; align-items: center; gap: 10px; }
+.pill { height: 36px; padding: 0 18px; border: 1px solid #DDD; border-radius: 10px; display: inline-flex; align-items: center; font-size: 16px; font-weight: 500; background: #fff; }
+.pill-sk { width: 52px; height: 36px; border: 1px solid #DDD; border-radius: 10px; position: relative; }
+.pill-sk::after { content: ""; position: absolute; left: 14px; top: 13px; width: 22px; height: 8px; border-radius: 4px; background: #C9CDD3; }
+.btn-send { height: 36px; padding: 0 20px; border-radius: 10px; background: #2170F4; color: #fff; display: inline-flex; align-items: center; font-size: 16px; font-weight: 600; }
+.ic { width: 22px; height: 22px; border-radius: 6px; background: #E1E4E8; flex: none; }
+.ft-r { margin-left: auto; width: 90px; height: 10px; border-radius: 5px; background: #E1E4E8; }
+
+.event { left: 0; width: 660px; height: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; color: #6B7280; }
+.msg { left: 0; height: 48px; display: flex; align-items: center; gap: 12px; }
+.bubble { height: 48px; padding: 0 18px; border-radius: 16px; background: #F2F2F2; display: inline-flex; align-items: center; font-size: 19px; white-space: pre; }
+.mention { color: #2170F4; }
+.typing { font-size: 17px; color: #8A8F98; }
+.typing i { font-style: normal; }
+
+#compose { border-color: #2170F4; box-shadow: 0 0 0 1px #2170F4; }
+
+/* chat box */
+#chat { left: 1020px; top: 892px; width: 660px; height: 60px; border: 1px solid #DDD; border-radius: 14px; background: #fff; }
+.ph { position: absolute; left: 20px; top: 0; line-height: 58px; font-size: 18px; color: #9AA0A6; }
+.tline { position: absolute; left: 20px; top: 0; height: 58px; display: flex; align-items: center; font-size: 18px; }
+.typed { position: relative; white-space: pre-wrap; }
+.sendc { position: absolute; right: 11px; top: 11px; width: 36px; height: 36px; border-radius: 50%; background: #C9D8F2; display: flex; align-items: center; justify-content: center; }
+.caret { position: absolute; width: 2px; border-radius: 1px; background: #2170F4; visibility: hidden; }
+
+/* dropdown */
+#dd {
+  left: 710px; top: 374px; width: 230px; height: 0; overflow: hidden; z-index: 20;
+  background: #fff; border: 1px solid #E3E3E3; border-radius: 12px;
+  box-shadow: 0 14px 34px rgba(20, 30, 50, .14), 0 2px 6px rgba(20, 30, 50, .06);
+}
+.dd-in { position: absolute; left: 0; top: 0; width: 228px; padding: 6px; }
+.dd-it { position: relative; height: 40px; border-radius: 8px; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 17px; }
+.dd-it .chk { position: absolute; right: 12px; top: 13px; display: flex; }  /* the wrapper is what animates, so it carries the position */
+.dd-hv { position: absolute; left: 6px; top: 6px; width: 216px; height: 40px; border-radius: 8px; background: #F2F4F7; }
+.dd-dv { height: 1px; background: #EEE; margin: 6px 4px; }
+.dash { width: 24px; height: 24px; border-radius: 50%; border: 1.5px dashed #9AA0A6; flex: none; }
+#cursors { left: 100px; top: 50px; width: 0; height: 0; z-index: 50; }

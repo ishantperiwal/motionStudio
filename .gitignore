@@ -1,0 +1,8 @@
+node_modules/
+out/
+.DS_Store
+# per-machine working data
+notes/*/*.json
+notes/*/*.png
+notes/_go.json
+!notes/.gitkeep
