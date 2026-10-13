@@ -1,9 +1,9 @@
 // Render a scene to frames / contact sheet / MP4.
 //
-//   npm run render -- inbox                         → out/inbox.mp4
-//   npm run render -- inbox --frames 0,100,200      → PNGs in out/inbox-frames/
-//   npm run render -- inbox --range 600-700 --png out/x
-//   npm run render -- inbox --sheet 0-1000:10       → out/inbox-sheet-*.png (5x4 tiles)
+//   npm run render -- my-film                       → out/my-film.mp4
+//   npm run render -- my-film --frames 0,100,200    → PNGs in out/my-film-frames/
+//   npm run render -- my-film --range 150-200 --png out/x
+//   npm run render -- my-film --sheet 0-250:10      → out/my-film-sheet-*.png (5x4 tiles)
 //   options: --blur 8 (sub-frame motion blur) --shutter 0.5 --scale 2 --workers 4 --out file.mp4 --crf 16
 import fs from 'node:fs';
 import path from 'node:path';

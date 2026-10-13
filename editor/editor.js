@@ -46,6 +46,7 @@ async function init() {
   es.onmessage = (e) => {
     const { paths = [] } = JSON.parse(e.data);
     if (paths.some((p) => p.startsWith('editor/'))) return location.reload();
+    if (!st.scene && paths.some((p) => p.startsWith('scenes/'))) return location.reload();   // first scene created
     if (paths.some((p) => p.startsWith(`scenes/${st.scene}/`) || p.startsWith('runtime/') || p.startsWith('tokens/'))) loadScene();
     if (paths.some((p) => p.startsWith(`notes/${st.scene}/`))) loadNotes();
   };
@@ -53,6 +54,12 @@ async function init() {
 
 function loadScene() {
   st.S = null;
+  if (!st.scene) {
+    frameEl.srcdoc = `<body style="margin:0;height:100vh;display:grid;place-items:center;background:#16161a;color:#a9a9b3;font:16px -apple-system,system-ui;text-align:center">
+      <div><div style="color:#fff;font-weight:600;margin-bottom:8px">No scenes yet</div>Create one with<br><code style="color:#fff">npm run new-scene -- my-film</code></div></body>`;
+    return;
+  }
+  frameEl.removeAttribute('srcdoc');
   frameEl.src = `/scenes/${st.scene}/?editor&t=${Date.now()}`;
   $('#openScene').href = `/scenes/${st.scene}/`;
 }

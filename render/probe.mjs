@@ -2,8 +2,8 @@
 // so motion quality (smooth starts, flat endings, hard stops, jumps) can be checked
 // without watching. Target = data-name (e.g. "Cursor – Priya") or a CSS selector.
 //
-//   npm run probe -- inbox "Cursor – Priya" --range 270-330
-//   npm run probe -- inbox "#cam" --range 600-680 --scale     (camera: tracks zoom too)
+//   npm run probe -- my-film "<data-name>" --range 270-330
+//   npm run probe -- my-film "#cam" --range 600-680 --scale     (camera: tracks zoom too)
 import { chromium } from 'playwright';
 import { startServer } from '../server/dev.mjs';
 

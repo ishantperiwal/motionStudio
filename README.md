@@ -13,7 +13,7 @@ Motion videos written in code, directed with notes pinned to frames.
 - **Any layer.** HTML/CSS, inline SVG (Affinity exports keep their layer names), PixiJS and Three.js,
   all on the same clock. A rough.js kit makes quick animatics/storyboards before the final.
 
-See **[RUN.md](RUN.md)** for a step-by-step guide to running it.
+See **[RUN-STUDIO.md](RUN-STUDIO.md)** for a step-by-step guide to running it.
 
 ## Requirements
 macOS, Node 20+, **Google Chrome** (rendering uses it via Playwright) and **ffmpeg** on PATH.
@@ -43,11 +43,11 @@ npm run new-scene -- my-film   # scaffold scenes/my-film (import map, stage, sta
 
 ## Command line
 ```bash
-npm run render -- inbox-v2                     # out/inbox-v2.mp4
-npm run render -- inbox-v2 --blur 6 --scale 2  # motion blur, supersampled
-npm run render -- inbox-v2 --frames 0,250,500  # stills → out/inbox-v2-frames/
-npm run render -- inbox-v2 --sheet 0-500:10    # contact sheets (20 frames each)
-npm run probe -- inbox-v2 "#cam" --range 120-180   # speed curve + rough-spot flags
+npm run render -- my-film                      # out/my-film.mp4
+npm run render -- my-film --blur 6 --scale 2   # motion blur, supersampled
+npm run render -- my-film --frames 0,120,200   # stills → out/my-film-frames/
+npm run render -- my-film --sheet 0-250:10     # contact sheets (20 frames each)
+npm run probe -- my-film "<data-name>" --range 120-180   # speed curve + rough-spot flags
 ```
 
 ## Writing a scene
@@ -70,8 +70,8 @@ proportional tilt, optional name tag), `typer` (uneven seeded typing), `loadSvg`
 `sketch` / `shotHud` (animatics). Layers: `pixiLayer`, `threeLayer`. Tokens: `tokens/motion.json`.
 
 ## Scenes
-- `inbox-v2` — shared-inbox feature explainer (final). `inbox-v2-animatic` — its storyboard.
-- `inbox` — the first, longer cut. `showcase` — Affinity SVG + PixiJS + Three.js on one clock.
+None ship with the studio. Create one with `npm run new-scene -- my-film`; each scene lives in
+`scenes/<id>/` and shows up in the editor's scene picker.
 
 ## Licenses
 GSAP 3.13 (with plugins) is free under GreenSock's own license — fine for internal use; check it before
