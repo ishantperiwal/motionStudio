@@ -13,6 +13,8 @@ Motion videos written in code, directed with notes pinned to frames.
 - **Any layer.** HTML/CSS, inline SVG (Affinity exports keep their layer names), PixiJS and Three.js,
   all on the same clock. A rough.js kit makes quick animatics/storyboards before the final.
 
+See **[RUN.md](RUN.md)** for a step-by-step guide to running it.
+
 ## Requirements
 macOS, Node 20+, **Google Chrome** (rendering uses it via Playwright) and **ffmpeg** on PATH.
 Scenes use the system font (SF Pro), so renders match across Macs.
