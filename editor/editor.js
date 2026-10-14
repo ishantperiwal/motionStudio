@@ -69,7 +69,7 @@ addEventListener('message', (e) => {
   const S = frameEl.contentWindow.__studio;
   Object.assign(st, { S, beats: S.beats(), frames: S.frames, fps: S.fps, w: S.width, h: S.height });
   frameEl.style.width = st.w + 'px'; frameEl.style.height = st.h + 'px';
-  fit(); if (!st.zoomed) fitDefault(); seek(Math.min(st.frame, st.frames - 1), true); loadNotes();
+  fit(); if (!st.zoomed) fitDefault(); seek(Math.min(st.frame, st.frames - 1), true); loadNotes(); loadExportSizes();
 });
 
 function fit() {
@@ -105,28 +105,46 @@ function seek(f, force = false) {
 }
 
 function setPlaying(p) {
+  const was = st.playing;
   st.playing = p;
   $('#playBtn').textContent = p ? '❚❚' : '▶';
   const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
   if (p && st.frame >= b) seek(a);
-  if (!p) seek(Math.round(st.frame), true);
+  if (!p) { clearTimeout(playTimer); seek(Math.round(st.frame), true); }
+  frameTimes = []; showRate();
+  if (p && !was) playLoop();
 }
-let last = null;
-function tick(now) {
-  if (st.playing && st.S) {
-    if (last != null) {
-      let f = st.frame + ((now - last) / 1000) * st.fps;
-      const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
-      if (f > b) { if (st.loop) f = a + ((f - b) % Math.max(1, b - a)); else { seek(b); setPlaying(false); } }
-      if (st.playing) seek(f);
-    }
-    last = now;
-  } else last = null;
-  requestAnimationFrame(tick);
+// Playback never skips: it shows every whole frame in order, and only moves on once the current frame has
+// been painted (two animation frames after the seek). At most real time (fps); if the scene is too heavy to
+// paint that fast, it plays slower — exactly what export will show — and a red badge reports the real rate.
+let playTimer = null, frameTimes = [];
+// wait for the frame to be painted; the timeout only matters when the tab is hidden (no paints happen there)
+const painted = () => Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 500))]);
+async function playLoop() {
+  while (st.playing && st.S) {
+    const t0 = performance.now();
+    const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
+    let f = Math.floor(st.frame) + 1;
+    if (f > b) { if (st.loop) f = a; else { setPlaying(false); break; } }
+    seek(f);
+    await painted();
+    const wait = 1000 / st.fps - (performance.now() - t0);
+    if (wait > 0) await new Promise((r) => { playTimer = setTimeout(r, wait); });
+    frameTimes.push(performance.now()); if (frameTimes.length > 12) frameTimes.shift();
+    showRate();
+  }
 }
-requestAnimationFrame(tick);
+function showRate() {
+  const el = $('#fpsBadge');
+  if (!st.playing || frameTimes.length < 6) { el.hidden = true; return; }
+  const fps = (frameTimes.length - 1) / ((frameTimes.at(-1) - frameTimes[0]) / 1000);
+  const slow = fps < st.fps - 1.5;
+  el.hidden = !slow;
+  if (slow) el.textContent = `● ${fps.toFixed(0)} fps — slower than real time (${st.fps})`;
+}
 
 function setRange(r) {
+  st.rangeAuto = false;              // a range the person marked themselves (cleared below for ones the editor set)
   st.range = r && r[1] > r[0] ? [Math.round(r[0]), Math.round(r[1])] : null;
   $('#rangeOut').textContent = st.range ? `${st.range[0]}–${st.range[1]} (${st.range[1] - st.range[0]}f)` : '';
   layoutRange();
@@ -325,28 +343,32 @@ function renderPanelHead() { const w = $('#panel .where'); if (w && st.pending) 
 // Spot mode: hover highlights the element under the pointer; a click picks that element,
 // a drag draws a free box.
 let drag = null;
-overlay.addEventListener('pointerdown', (e) => {
-  if (!st.comment) { deselect(); return; }
+// A spot drag can start anywhere in the viewing area — on the frame or in the margin around it — and the box
+// is clipped to the frame's edges. (Starting outside the frame used to begin a native text selection instead.)
+const startSpot = (e) => {
   if (st.playing) setPlaying(false);
-  overlay.setPointerCapture(e.pointerId);
+  e.preventDefault();
   const r = overlay.getBoundingClientRect();
-  drag = { x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top };
+  const cx = (v, max) => clamp(v, 0, max);
+  drag = { x0: cx(e.clientX - r.left, r.width), y0: cx(e.clientY - r.top, r.height) };
+  drag.x1 = drag.x0; drag.y1 = drag.y0;
+  const move = (ev) => { const q = overlay.getBoundingClientRect(); drag.x1 = cx(ev.clientX - q.left, q.width); drag.y1 = cx(ev.clientY - q.top, q.height); drawOverlay(); };
+  const up = () => {
+    removeEventListener('pointermove', move); removeEventListener('pointerup', up); dismissDrag = null;
+    let x = Math.min(drag.x0, drag.x1) / st.k, y = Math.min(drag.y0, drag.y1) / st.k;
+    let w = Math.abs(drag.x1 - drag.x0) / st.k, hh = Math.abs(drag.y1 - drag.y0) / st.k;
+    drag = null;
+    if (w < 12 && hh < 12) { x -= 30; y -= 30; w = 60; hh = 60; }   // a click marks a 60px spot
+    const region = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(hh) };
+    const span = openSpan();
+    if (span) { span.region = region; st.areaSel = true; setComment(false); retarget(span); renderPanel(); }   // area for the open span note
+    else startNote({ region });
+  };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+  dismissDrag = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); drag = null; dismissDrag = null; drawOverlay(); };
   drawOverlay();
-});
-overlay.addEventListener('pointermove', (e) => {
-  if (!drag) return;
-  const r = overlay.getBoundingClientRect();
-  drag.x1 = clamp(e.clientX - r.left, 0, r.width); drag.y1 = clamp(e.clientY - r.top, 0, r.height);
-  drawOverlay();
-});
-overlay.addEventListener('pointerup', () => {
-  if (!drag) return;
-  let x = Math.min(drag.x0, drag.x1) / st.k, y = Math.min(drag.y0, drag.y1) / st.k;
-  let w = Math.abs(drag.x1 - drag.x0) / st.k, hh = Math.abs(drag.y1 - drag.y0) / st.k;
-  drag = null;
-  if (w < 12 && hh < 12) { x -= 30; y -= 30; w = 60; hh = 60; }   // a click marks a 60px spot
-  startNote({ region: { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(hh) } });
-});
+};
+overlay.addEventListener('pointerdown', (e) => { if (!st.comment) { deselect(); return; } startSpot(e); });
 
 function drawOverlay() {
   overlay.innerHTML = '';
@@ -356,13 +378,63 @@ function drawOverlay() {
     overlay.append(h('div', { class: 'region', style: { left: x + 'px', top: y + 'px', width: Math.abs(drag.x1 - drag.x0) + 'px', height: Math.abs(drag.y1 - drag.y0) + 'px' } }));
   }
   const shown = st.pending || st.notes.find((x) => x.id === st.sel);
-  if (shown?.region) box(shown.region, st.pending ? '' : 'saved', st.pending ? null : shown.elements?.[0]?.name);
+  if (shown?.region) overlay.append(editBox(shown));
 }
 
+// The open note's box can be adjusted: drag inside it to move, drag the corner grip to resize.
+// On release it's treated like a freshly drawn box — elements and beats are re-detected, and a
+// saved note is re-saved (the server re-takes its crop).
+function editBox(n) {
+  const k = st.k, label = st.pending ? null : n.elements?.[0]?.name;
+  const place = (el, r) => Object.assign(el.style, { left: r.x * st.k + 'px', top: r.y * st.k + 'px', width: r.w * st.k + 'px', height: r.h * st.k + 'px' });
+  const el = h('div', { class: `region edit ${st.pending ? '' : 'saved'} ${n.range && st.areaSel ? 'picked' : ''}`, title: 'Drag to move · corner to resize' },
+    label ? h('span', { class: 'lbl' }, label) : null, h('div', { class: 'grip', title: 'Drag to resize' }));
+  place(el, n.region);
+  el.addEventListener('pointerdown', (e) => {
+    e.stopPropagation(); e.preventDefault();
+    if (st.playing) setPlaying(false);
+    if (n.range) { st.areaSel = true; el.classList.add('picked'); }   // a span note's area can be selected on its own (⌫ removes just the area)
+    const mode = e.target.classList.contains('grip') ? 'size' : 'move';
+    const sx = e.clientX, sy = e.clientY, r0 = { ...n.region }, W = st.S.width, H = st.S.height;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+    const mv = (ev) => {
+      const dx = (ev.clientX - sx) / st.k, dy = (ev.clientY - sy) / st.k;
+      n.region = mode === 'move'
+        ? { ...r0, x: Math.round(clamp(r0.x + dx, 0, W - r0.w)), y: Math.round(clamp(r0.y + dy, 0, H - r0.h)) }
+        : { ...r0, w: Math.round(clamp(r0.w + dx, 12, W - r0.x)), h: Math.round(clamp(r0.h + dy, 12, H - r0.y)) };
+      place(el, n.region);
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up);
+      el.classList.remove('dragging');
+      if (n.region.x !== r0.x || n.region.y !== r0.y || n.region.w !== r0.w || n.region.h !== r0.h) retarget(n);
+    };
+    el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up);
+  });
+  return el;
+}
+function retarget(n) {
+  const fi = n.frame ?? Math.floor(st.frame);
+  const hits = st.S.hitTest(n.region, n.range || [fi, fi]);
+  const elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
+  const beats = hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 }));
+  if (n === st.pending || !n.id) Object.assign(n, { elements, beats });
+  else save(n, { region: n.region, elements, beats });
+  const t = $('#panel .target');
+  if (t) t.lastChild.textContent = elements.slice(0, 3).map((x) => x.name).join(' · ');
+  else if (elements.length && !typing()) renderPanel();
+  drawOverlay();
+}
+
+// the span (duration) note that's open, if any: drawing a box while it's open marks its area instead of a new note
+const openSpan = () => { const n = st.pending || st.notes.find((x) => x.id === st.sel); return n?.range ? n : null; };
 function setComment(on) {
   st.comment = on;
   overlay.classList.toggle('comment', on);
+  $('#viewWrap').classList.toggle('comment-on', on);
   $('#commentBtn').classList.toggle('on', on);
+  const cue = [...document.querySelectorAll('#panel .cue.add')].find((b) => /area/.test(b.textContent)); if (cue) { cue.classList.toggle('on', on); cue.textContent = on ? 'draw the area…' : '+ area'; }
 }
 
 // ------------------------------------------------------------------ notes
@@ -375,8 +447,10 @@ async function loadNotes() {
   st.checklist = check.items || [];
   // keep the open note's object (it may hold typing that hasn't round-tripped yet)
   const open = st.notes.find((x) => x.id && x.id === st.sel);
-  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null }) : f));
-  if (st.sel && !st.notes.find((n) => n.id === st.sel)) st.sel = null;
+  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, region: open.region, elements: open.elements, beats: open.beats }) : f));   // the open note's local edits (text, box) win
+  // the open note was resolved elsewhere (e.g. by Claude): drop it and the time range it had selected,
+  // so a spot note drawn next doesn't inherit that range and turn into a span note
+  if (st.sel && !st.notes.find((n) => n.id === st.sel)) { st.sel = null; setRange(null); }
   buildTimeline(); drawOverlay();
   if (!typing()) renderPanel();          // never yank the text box out from under the cursor
 
@@ -384,7 +458,7 @@ async function loadNotes() {
 const typing = () => document.activeElement?.closest?.('#panel');
 
 function startNote({ region = null }) {
-  const fi = Math.floor(st.frame), range = st.range;
+  const fi = Math.floor(st.frame), range = region && st.rangeAuto ? null : st.range;   // a spot never inherits a range the editor selected for you
   const hits = region ? st.S.hitTest(region, range || [fi, fi])
     : { beats: range ? st.beats.filter((b) => b.f1 >= range[0] && b.f0 <= range[1] && b.f1 > b.f0).map((b) => ({ name: b.name, f0: b.f0, f1: b.f1 })) : [], elements: [] };
   let elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
@@ -405,12 +479,17 @@ function deselect() {
   setRange(null);
   buildTimeline(); renderPanel(); drawOverlay();
 }
-$('#viewWrap').addEventListener('pointerdown', (e) => { if (!e.target.closest('#view, #tools')) deselect(); });
+$('#viewWrap').addEventListener('pointerdown', (e) => {
+  if (e.target.closest('#view, #tools')) return;
+  if (st.comment) startSpot(e);      // spot mode: a drag from the margin starts the box at the frame's edge
+  else deselect();
+});
 lanes.addEventListener('pointerdown', (e) => { if (!e.target.closest('.nbar, .name, .add')) deselect(); });
 
 function selectNote(n) {
   if (st.pending && st.pending.text?.trim()) persist(st.pending);
   st.pending = null; st.sel = n.id; st.curveOpen = false; st.editing = false;
+  st.areaSel = false;                  // picking the note (timeline bar) selects the note, not its area
   setPlaying(false);
   seek(n.frame, true);
   setRange(n.range || null);
@@ -428,12 +507,14 @@ function persist(n) {
       if (!n.text?.trim()) return;
       const { scene: _s, id: _i, created: _c, ...body } = n;
       const note = await (await fetch('/api/notes', json('POST', { ...body, scene: st.scene }))).json();
-      n.id = note.id; n.created = note.created;
+      n.id = note.id; n.created = note.created; n._fresh = true;   // still a draft until ✓ or it's closed
+      for (const d of n._refs || []) await addRef(n, d);   // images pasted before the note was first saved
+      delete n._refs;
       if (st.pending === n) { st.pending = null; st.sel = n.id; }
       if (!st.notes.includes(n)) st.notes.push(n);
       buildTimeline();
     } else {
-      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, region: n.region }));
+      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region }));
       const lane = [...lanes.children].find((l) => l._note === n || l._note?.id === n.id);
       if (lane) lane.querySelector('.name').lastChild.textContent = n.text;
     }
@@ -447,6 +528,7 @@ function save(n, patch) {
 }
 async function commit(n) {          // ✓ — save now and show the saved view
   clearTimeout(saveTimer);
+  delete n._fresh;
   if (!n.text?.trim()) return;
   st.editing = false;
   await persist(n);
@@ -462,6 +544,26 @@ async function removeNote(n) {      // delete button / ⌫ — removes the note
   buildTimeline(); renderPanel(); drawOverlay();
 }
 const resolve = removeNote;
+function removeArea(n) {
+  n.region = null; n.elements = []; st.areaSel = false;
+  if (n !== st.pending && n.id) save(n, { region: null, elements: [] });
+  renderPanel(); drawOverlay();
+}
+// Escape = dismiss whatever note work is in progress: a spot being drawn, a span being recorded, a new note
+// (discarded, even if autosave already created it), or an open note (closed; its saved text stays).
+let dismissDrag = null;
+async function dismissNote() {
+  if (dismissDrag) { dismissDrag(); return; }
+  if (st.rec) { st.rec = null; $('#rec').classList.remove('on'); $('#rec').textContent = '● REC'; }
+  const open = st.notes.find((x) => x.id === st.sel);
+  const n = st.pending || (open?._fresh ? open : null);   // a brand-new note (even if autosave already created it) is discarded
+  if (n) { clearTimeout(saveTimer); await queue; if (n.id) { await removeNote(n); return; } st.pending = null; }
+  else if (st.sel) { clearTimeout(saveTimer); await queue; st.sel = null; }
+  else if (st.comment) setComment(false);
+  st.editing = false; setRange(null);
+  buildTimeline(); renderPanel(); drawOverlay();
+  document.activeElement?.blur?.();
+}
 
 // Everything about a note and its frame, as text to paste anywhere (⌘C with a note selected).
 function noteContext(n) {
@@ -493,9 +595,34 @@ function miniCurve(c) {
   return svg;
 }
 
+// Reference images: paste (⌘V / Ctrl+V) while a note is open. No upload UI — just the clipboard.
+async function addRef(n, dataUrl) {
+  const note = await (await fetch(`/api/notes/${st.scene}/${n.id}/refs`, json('POST', { data: dataUrl }))).json();
+  n.refs = note.refs;
+}
+async function removeRef(n, r) {
+  if (r.d) n._refs = (n._refs || []).filter((d) => d !== r.d);
+  else { const note = await (await fetch(`/api/notes/${st.scene}/${n.id}/refs/${encodeURIComponent(r.f)}`, { method: 'DELETE' })).json(); n.refs = note.refs; }
+  renderPanel();
+}
+addEventListener('paste', async (e) => {
+  const n = st.pending || st.notes.find((x) => x.id === st.sel);
+  const files = [...(e.clipboardData?.items || [])].filter((it) => it.kind === 'file' && it.type.startsWith('image/')).map((it) => it.getAsFile());
+  if (!n || !files.length) return;            // plain text pastes behave as usual
+  e.preventDefault();
+  const keep = $('#panel textarea')?.value;
+  for (const f of files) {
+    const dataUrl = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); });
+    if (n.id) { await queue; await addRef(n, dataUrl); } else (n._refs = n._refs || []).push(dataUrl);
+  }
+  renderPanel();
+  const ta = $('#panel textarea'); if (ta && keep != null) { ta.value = keep; ta.focus({ preventScroll: true }); }
+});
+
 const trash = `<svg width="15" height="15" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function renderPanel() {
+  if (!(st.pending || st.notes.find((x) => x.id === st.sel))?.region) st.areaSel = false;
   panel.innerHTML = '';
   const n = st.pending || st.notes.find((x) => x.id === st.sel);
   if (!n) {
@@ -516,15 +643,25 @@ function renderPanel() {
         setPlaying(false); seek(frame, true); setRange(range);
         buildTimeline(); renderPanel(); drawOverlay();
       };
-      panel.append(h('div', { class: 'check-h' }, 'To check', h('span', { class: 'muted' }, `${st.checklist.length}`)),
+      const checkAll = async () => {
+        await fetch(`/api/checklist?scene=${st.scene}&id=*`, { method: 'DELETE' });
+        st.checklist = []; st.replyTo = null; renderPanel();
+      };
+      panel.append(h('div', { class: 'check-h' }, h('span', {}, 'To check ', h('span', { class: 'muted' }, `${st.checklist.length}`)),
+        h('button', { class: 'check-all', title: 'All checked — clear the list', onclick: checkAll }, '✓ Check all')),
         ...st.checklist.map((it) => {
           const replying = st.replyTo === it.id;
-          const card = h('div', { class: `check-it ${replying ? 'replying' : ''}`, title: 'Jump there', onclick: () => { setPlaying(false); seek(it.frame, true); setRange(it.range || null); } },
+          const card = h('div', { class: `check-it ${replying ? 'replying' : ''}`, title: 'Jump there', onclick: () => { setPlaying(false); seek(it.frame, true); setRange(it.range || null); st.rangeAuto = true; } },
             h('span', { class: 'fr' }, it.range ? `${it.range[0]}–${it.range[1]}` : `f ${it.frame}`),
             h('span', { class: 'tx' }, it.text),
+            // while replying: ✕ cancels the reply, ↑ sends it (✓ never dismisses an item you're replying to)
             h('div', { class: 'check-btns' },
-              h('button', { class: 'reply-btn', title: 'More to say? Reply — it comes back as a note here', onclick: (e) => { e.stopPropagation(); st.replyTo = replying ? null : it.id; renderPanel(); } }, '↩'),
-              h('button', { class: 'resolve small', title: 'Checked — remove', onclick: async (e) => { e.stopPropagation(); await dropItem(it); renderPanel(); } }, '✓')));
+              replying
+                ? h('button', { class: 'reply-btn', title: 'Cancel reply', onclick: (e) => { e.stopPropagation(); st.replyTo = null; renderPanel(); } }, '✕')
+                : h('button', { class: 'reply-btn', title: 'More to say? Reply — it comes back as a note here', onclick: (e) => { e.stopPropagation(); st.replyTo = it.id; renderPanel(); } }, '↩'),
+              replying
+                ? h('button', { class: 'resolve small send', title: 'Send reply (Enter)', onclick: (e) => { e.stopPropagation(); sendReply(it, card.querySelector('textarea')?.value || ''); } }, '↑')
+                : h('button', { class: 'resolve small', title: 'Checked — remove', onclick: async (e) => { e.stopPropagation(); await dropItem(it); renderPanel(); } }, '✓')));
           if (replying) {
             const ta = h('textarea', { placeholder: 'What else should change here? (Enter to add · ⇧Enter for a new line)', onclick: (e) => e.stopPropagation(),
               onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(it, ta.value); } if (e.key === 'Escape') { st.replyTo = null; renderPanel(); } } });   // Enter sends, ⇧Enter = new line
@@ -554,10 +691,11 @@ function renderPanel() {
   if (n.elements?.length) panel.append(h('div', { class: 'target' }, h('span', { class: 'muted' }, 'In the box: '), n.elements.slice(0, 3).map((e) => e.name).join(' · ')));
   if (editing) {
     const ta = h('textarea', {
-      value: n.text || '', placeholder: 'What should change here?',
+      value: n.text || '', placeholder: 'What should change here?  (⌘V pastes a reference image)',
       oninput: (e) => save(n, { text: e.target.value }),
       onkeydown: (e) => {
-        if ((e.key === 'Enter' && (e.metaKey || e.ctrlKey)) || e.key === 'Escape') { e.preventDefault(); commit(n); }
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(n); }
+        if (e.key === 'Escape') { e.preventDefault(); n === st.pending || n._fresh ? dismissNote() : commit(n).then(() => dismissNote()); }
       },
     });
     panel.append(ta);
@@ -566,12 +704,23 @@ function renderPanel() {
     panel.append(h('div', { class: 'text-view', title: 'Click to edit', onclick: () => { st.editing = true; st.focusText = true; renderPanel(); } }, n.text));
   }
 
+  const refs = [...(n.refs || []).map((f) => ({ f, src: `/notes/${st.scene}/${f}` })), ...(n._refs || []).map((d) => ({ d, src: d }))];
+  if (refs.length) panel.append(h('div', { class: 'refs' }, ...refs.map((r) => {
+    const x = h('button', { class: 'x', title: 'Remove this reference', onclick: () => removeRef(n, r) }, '×');
+    return h('div', { class: 'ref' }, h('img', { src: r.src, title: 'Reference image (pasted with ⌘V)' }), x);
+  })));
+
   const setCurve = (c) => { save(n, { curve: c }); st.curveOpen = !!c; const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
   panel.append(h('div', { class: 'cues' },
     n.curve
       ? h('button', { class: `cue ${st.curveOpen ? 'on' : ''}`, title: 'Easing you want — click to edit', onclick: () => { st.curveOpen = !st.curveOpen; renderPanel(); } },
           miniCurve(n.curve), `cubic-bezier(${n.curve.join(', ')})`)
-      : h('button', { class: 'cue add', onclick: () => setCurve([...(st.S.tokens?.ease?.move || [0.45, 0, 0.2, 1])]) }, '+ easing')));
+      : h('button', { class: 'cue add', onclick: () => setCurve([...(st.S.tokens?.ease?.move || [0.45, 0, 0.2, 1])]) }, '+ easing'),
+    n.range
+      ? (n.region
+          ? h('button', { class: 'cue', title: 'Remove the marked area', onclick: () => removeArea(n) }, '✕ area')
+          : h('button', { class: `cue add ${st.comment ? 'on' : ''}`, title: 'Draw a box on the frame to mark an area for this span (S)', onclick: () => setComment(!st.comment) }, st.comment ? 'draw the area…' : '+ area'))
+      : null));
   if (n.curve && st.curveOpen) {
     const tokens = Object.entries(st.S.tokens?.ease || {});
     panel.append(h('div', { class: 'curve' },
@@ -622,20 +771,59 @@ function bezierEditor(points, onInput, onCommit) {
 
 // ------------------------------------------------------------------ chrome
 $('#playBtn').onclick = () => setPlaying(!st.playing);
+// Export: pick a size (each with a rough file-size estimate), export, stop while it runs, then download
+const EXPORT_SCALES = [1, 0.75, 0.5, 0.25];
+const EST_BPPF = 0.0067;   // bytes per pixel per frame, used until this scene has a real export to calibrate from
+let exportCalib = null;
+const fmtSize = (b) => (b >= 1e6 ? `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+function fillExportSizes() {
+  const sel = $('#exportSize');
+  let keep = sel.value; if (!keep) try { keep = localStorage.getItem('ms.exportScale'); } catch {}
+  sel.innerHTML = '';
+  EXPORT_SCALES.forEach((k) => {
+    const W = Math.round((st.w * k) / 2) * 2, H = Math.round((st.h * k) / 2) * 2, c = exportCalib;
+    // H.264 needs relatively more bits per pixel at small sizes, so size scales a little slower than pixel count
+    const bytes = c ? c.bytes * (st.frames / c.frames) * Math.pow((W * H) / (c.w * c.h), 0.8) : EST_BPPF * W * H * st.frames;
+    sel.append(h('option', { value: String(k) }, `${Math.round(k * 100)}% (${W}×${H}) · ~${fmtSize(bytes)}`));
+  });
+  if (keep && EXPORT_SCALES.includes(+keep)) sel.value = keep;
+  sel.title = exportCalib ? 'Export size. Estimates are scaled from this scene\'s last export.' : 'Export size. Estimates are rough until this scene has been exported once.';
+}
+async function loadExportSizes() {
+  try { exportCalib = (await (await fetch(`/api/export?scene=${st.scene}&calib`)).json()).calib; } catch { exportCalib = null; }
+  fillExportSizes();
+  try { const j = await (await fetch(`/api/export?scene=${st.scene}`)).json(); if (j.state === 'running' || j.state === 'stopping') pollExport(); } catch {}   // pick a running export back up after a reload
+}
+$('#exportSize').onchange = () => { try { localStorage.setItem('ms.exportScale', $('#exportSize').value); } catch {} };
+let exportTimer = null;
+function exportUi(running) {
+  $('#exportBtn').disabled = running; $('#exportSize').disabled = running; $('#exportStop').hidden = !running;
+}
+async function pollExport() {
+  clearTimeout(exportTimer);
+  const b = $('#exportBtn');
+  const j = await (await fetch(`/api/export?scene=${st.scene}`)).json();
+  if (j.state === 'running' || j.state === 'stopping') {
+    exportUi(true);
+    b.textContent = j.state === 'stopping' ? 'Stopping…' : j.total ? `Exporting ${Math.round((j.done / j.total) * 100)}%` : 'Exporting…';
+    exportTimer = setTimeout(pollExport, 700); return;
+  }
+  exportUi(false);
+  if (j.state === 'done') {
+    b.textContent = `⤓ Download (${(j.size / 1e6).toFixed(1)} MB)`; b.dataset.file = j.file; b.classList.add('on');
+    loadExportSizes();   // the new file sharpens the estimates
+    exportTimer = setTimeout(() => { delete b.dataset.file; b.classList.remove('on'); b.textContent = '⤓ Export MP4'; }, 60000);
+  } else if (j.state === 'stopped') b.textContent = '⤓ Export MP4';
+  else if (j.state === 'failed') { b.textContent = 'Export failed — retry'; console.error(j.log); }
+}
 $('#exportBtn').onclick = async () => {
   const b = $('#exportBtn');
   if (b.dataset.file) { const a = h('a', { href: '/' + b.dataset.file, download: '' }); document.body.append(a); a.click(); a.remove(); return; }
-  await fetch(`/api/export?scene=${st.scene}`, { method: 'POST' });
-  b.disabled = true;
-  const poll = async () => {
-    const j = await (await fetch(`/api/export?scene=${st.scene}`)).json();
-    if (j.state === 'running') { b.textContent = j.total ? `Exporting ${Math.round((j.done / j.total) * 100)}%` : 'Exporting…'; return setTimeout(poll, 700); }
-    b.disabled = false;
-    if (j.state === 'done') { b.textContent = `⤓ Download (${(j.size / 1e6).toFixed(1)} MB)`; b.dataset.file = j.file; b.classList.add('on'); setTimeout(() => { delete b.dataset.file; b.classList.remove('on'); b.textContent = '⤓ Export MP4'; }, 60000); }
-    else { b.textContent = 'Export failed — retry'; console.error(j.log); }
-  };
-  poll();
+  delete b.dataset.file; b.classList.remove('on');
+  await fetch(`/api/export?scene=${st.scene}&scale=${$('#exportSize').value || 1}`, { method: 'POST' });
+  pollExport();
 };
+$('#exportStop').onclick = async () => { $('#exportStop').disabled = true; await fetch(`/api/export?scene=${st.scene}`, { method: 'DELETE' }); $('#exportStop').disabled = false; pollExport(); };
 $('#sendBtn').onclick = async () => {
   const b = $('#sendBtn');
   if (st.pending?.text?.trim()) await persist(st.pending);
@@ -673,7 +861,8 @@ addEventListener('keydown', (e) => {
     case 'x': case 'X': setRange(null); break;
     case 'Backspace': case 'Delete': {   // remove the selected note (the text box keeps its own Backspace)
       const n = st.pending || st.notes.find((x) => x.id === st.sel);
-      if (n) { e.preventDefault(); removeNote(n); }
+      if (n && n.range && n.region && st.areaSel) { e.preventDefault(); removeArea(n); }   // the area is selected: remove only the area
+      else if (n) { e.preventDefault(); removeNote(n); }
       break;
     }
     case '=': case '+': st.zoomed = true; zoomBy(1.5); break;
@@ -681,11 +870,7 @@ addEventListener('keydown', (e) => {
     case '0': st.zoomed = false; fitDefault(); layoutTimeline(); break;
     case 'l': case 'L': setLoop(!st.loop); break;
     case 's': case 'S': case 'c': case 'C': if (!e.metaKey && !e.ctrlKey) setComment(!st.comment); break;
-    case 'Escape':
-      if (st.pending) { st.pending = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); }
-      else if (st.comment) setComment(false);
-      else if (st.sel) { st.sel = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); }
-      break;
+    case 'Escape': dismissNote(); break;
     default: return;
   }
 });

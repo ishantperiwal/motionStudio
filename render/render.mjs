@@ -22,6 +22,12 @@ const blur = +opt('blur', 1), shutter = +opt('shutter', 0.5), scale = +opt('scal
 const outDir = path.join(ROOT, 'out');
 fs.mkdirSync(outDir, { recursive: true });
 
+// Stop (from the editor) sends SIGTERM to this process group: remove the temporary frames and the half-written file, then exit
+const tmpDirs = [];
+let partialOut = null;
+const cleanTmp = () => tmpDirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true }));
+process.on('SIGTERM', () => { cleanTmp(); if (partialOut) fs.rmSync(partialOut, { force: true }); process.exit(143); });
+
 const server = await startServer({ port: 0, watch: false, quiet: true });
 const base = `http://localhost:${server.address().port}`;
 const browser = await chromium.launch({ channel: 'chrome' });
@@ -44,6 +50,8 @@ async function run(jobs) {
     while (next < jobs.length) {
       const j = jobs[next++];
       await page.evaluate((t) => window.seek(t), j.t);
+      // let the compositor paint the new frame before capturing (otherwise heavy 3D frames can be grabbed half-drawn)
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       await page.screenshot({ path: j.file });
       if (++done % 10 === 0) process.stdout.write(`\r${done}/${jobs.length}`);
     }
@@ -62,7 +70,7 @@ try {
   if (opt('sheet')) {
     const [rng, step = '10'] = opt('sheet').split(':');
     const [a, b] = parseRange(rng);
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-sheet-'));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-sheet-')); tmpDirs.push(tmp);
     const list = []; for (let f = a; f <= Math.min(b, frames - 1); f += +step) list.push(f);
     await run(list.map((f, i) => ({ t: f, file: path.join(tmp, `${String(i).padStart(5, '0')}.png`) })));
     const out = opt('out', path.join(outDir, `${scene}-sheet-%d.png`));
@@ -77,6 +85,7 @@ try {
   } else {
     const [a, b] = parseRange(opt('range', `0-${frames - 1}`));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ms-render-'));
+    tmpDirs.push(tmp);
     const jobs = [];
     for (let f = a, i = 0; f <= b; f++) for (let k = 0; k < blur; k++, i++) {
       // sub-frame samples spread across the shutter window centred on the frame
@@ -87,12 +96,14 @@ try {
     await run(jobs);
     const out = opt('out', path.join(outDir, `${scene}.mp4`));
     const vf = blur > 1 ? [`tmix=frames=${blur}`, `select='eq(mod(n\\,${blur})\\,${blur - 1})'`, `setpts=N/${fps}/TB`] : [];
+    partialOut = path.resolve(ROOT, out);   // only from here on is the file ours to remove if stopped mid-encode
     ffmpeg(['-framerate', String(fps * blur), '-i', path.join(tmp, '%06d.png'), ...(vf.length ? ['-vf', vf.join(',')] : []),
       '-r', String(fps), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', opt('crf', '16'), '-preset', 'slow', '-movflags', '+faststart', out]);
     fs.rmSync(tmp, { recursive: true, force: true });
     console.log(`→ ${out}`);
   }
 } finally {
+  cleanTmp();
   await browser.close();
   server.close();
 }

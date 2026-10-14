@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zapp Account – Film</title>
+<script type="importmap">{"imports":{"gsap":"/vendor/gsap/index.js","gsap/":"/vendor/gsap/","roughjs":"/vendor/roughjs/bundled/rough.esm.js","pixi.js":"/vendor/pixi.js/dist/pixi.mjs","three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","@studio/":"/runtime/"}}</script>
+<link rel="stylesheet" href="/runtime/stage.css">
+<style>
+  #stage { --stage-bg: #1C3954; font-family: 'InterRupee', -apple-system, 'SF Pro Text', system-ui; -webkit-font-smoothing: antialiased; }
+  #bg { position: absolute; inset: 0; background: #1C3954; }
+  /* navy tile wall, placed in 3D behind the phone so the camera gives it real perspective */
+  #grid { position: absolute; left: -4500px; top: -4500px; width: 9000px; height: 9000px; background-color: #1F3D5C;
+    /* plain grid: thin, opaque, evenly weighted lines (opaque so crossings don't double up into dots) */
+    background-image: linear-gradient(90deg, #335A80 0 6px, transparent 6px), linear-gradient(0deg, #335A80 0 6px, transparent 6px);
+    background-size: 60px 60px; background-position: 57px 57px; }   /* lines centred on multiples of 60 from the grid's centre (the world origin) */
+  #outline { position: absolute; inset: 0; filter: url(#stickerF); }
+  /* vignette in the background's own navy, so the grid fades out toward the frame edges */
+  #vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 72% 76% at 50% 50%, rgba(31,61,92,0) 52%, rgba(31,61,92,.65) 84%, #1F3D5C 100%); }
+  #persp, #persp2, #persp3 { position: absolute; inset: 0; perspective: none; }   /* orthographic camera: no foreshortening */
+  #world, #world2, #world3 { position: absolute; left: 960px; top: 600px; width: 0; height: 0; transform-style: preserve-3d; }
+  #world3 { transform-style: flat; }   /* only the flat number cards live here; flat lets their backdrop blur see the grid */
+  #floorShadow, #floorShadowB { display: none; position: absolute; left: -192px; top: -402px; width: 384px; height: 804px; border-radius: 60px; background: rgba(4, 12, 22, .55); filter: blur(40px); }
+  #phone, #phoneBefore { position: absolute; left: -192px; top: -402px; width: 384px; height: 804px; transform-style: preserve-3d; }
+  #slabs { position: absolute; inset: 0; transform-style: preserve-3d; }
+  /* body layers are rings too (centre cut out): nothing solid sits behind the screen for the 3D sort to misplace */
+  .slab { position: absolute; inset: 0; border-radius: 58px; background: #2B353E; padding: 26px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+  .side-wall { position: absolute; backface-visibility: hidden; background: #2B353E; }
+  .side-wall .antenna { position: absolute; display: block; background: #4A5661; }   /* subtle: a slightly lighter line on the body */
+  .side-btn { position: absolute; transform-style: preserve-3d; }
+  .side-btn i { position: absolute; inset: 0; display: block; }
+  .side-btn .btn-wall { position: absolute; left: 0; top: 0; display: block; background: #1E262D; }
+  .side-btn .groove { inset: -1.5px; background: #151C22; }
+  .side-btn .wall { background: #34404A; }
+  .side-btn .cap { background: #5A6672; }
+  /* the bezel is a ring (centre cut out), so even if the 3D sort misorders it for a frame it can never cover the screen */
+  .bezel { position: absolute; inset: 0; border-radius: 58px; background: #090D10; box-shadow: inset 0 0 0 2px #8A96A0, inset 0 0 0 3.5px #2A343C, inset 0 0 0 5px #090D10;
+    padding: 14px; -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+  #backplate { position: absolute; inset: 0; border-radius: 58px; backface-visibility: hidden; background: linear-gradient(150deg, #5D6A75 0%, #2E3942 40%, #1B232A 100%); box-shadow: inset 0 0 0 2px #7D8994; }
+  /* camera island + lenses: real extruded geometry (walls built in scene.js), flat faces, no fake shading */
+  #backplate { transform-style: preserve-3d; }
+  /* iPhone 16-style: a tall pill island in the top-left corner as seen from behind (like the real phone), flash beside it */
+  .cam-bump { position: absolute; left: 24px; top: 24px; width: 88px; height: 158px; transform-style: preserve-3d; }
+  .xw { position: absolute; left: 0; top: 0; display: block; }
+  .cam-bump > .xw { background: #6B7782; }
+  .cam-bump .cap { position: absolute; inset: 0; border-radius: 44px; background: #56636F; box-shadow: inset 0 0 0 1.5px #7C8893; }   /* lighter than the back so it reads as its own part */
+  .lens { position: absolute; width: 64px; height: 64px; transform-style: preserve-3d; }
+  .lens > .xw { background: #6E7984; }
+  .lens .glass { position: absolute; inset: 0; border-radius: 50%; background: #0E1318; box-shadow: inset 0 0 0 5px #9AA4AE, inset 0 0 0 11px #161D23; }
+  .lens .glass::after { content: ''; position: absolute; left: 23px; top: 23px; width: 18px; height: 18px; border-radius: 50%; background: #1E2A44; }
+  .flash { position: absolute; left: 128px; top: 76px; width: 18px; height: 18px; border-radius: 50%; background: #CFC6AE; box-shadow: inset 0 0 0 2px #8D8672; }
+
+  #screen { position: absolute; left: 12px; top: 12px; width: 360px; height: 780px; transform-style: preserve-3d; }
+  .scr-bg { position: absolute; inset: 0; border-radius: 46px; overflow: hidden; background: #fff; box-shadow: 0 40px 80px -30px rgba(25, 55, 85, .35); }
+  #clip { position: absolute; left: 0; top: 48px; width: 360px; height: 732px; overflow: hidden; border-radius: 0 0 46px 46px; }
+  #content { position: absolute; left: 0; top: -48px; width: 360px; height: 780px; }
+  .top-wash { position: absolute; left: 7px; top: -164px; width: 346.56px; height: 470px; border-radius: 40px; background: linear-gradient(180deg, rgba(234,246,255,0) 53%, rgba(234,246,255,.7) 77%); }
+  /* Dynamic Island: softened black (not pure), with the front camera lens just visible on its right */
+  .island { position: absolute; left: 123px; top: 11px; width: 114px; height: 33px; border-radius: 20px; background: #15191D; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); }
+  .island::after { content: ''; position: absolute; right: 11px; top: 11.5px; width: 10px; height: 10px; border-radius: 50%; background: #1C232B; }   /* front camera: just a hint */
+  .home-ind { position: absolute; left: 113px; top: 763px; width: 134px; height: 7px; border-radius: 4px; background: rgba(17, 24, 29, .45); }   /* semi-transparent home indicator */
+
+
+  /* the real Zapp Account home — one layer per element (positions from the Figma file) */
+  .pc { position: absolute; }
+  .pc img, img.pc { display: block; }
+  .sb-time { left: 18px; top: 18px; width: 54px; text-align: center; font-weight: 600; font-size: 15px; line-height: 18px; color: #000; }
+  .sb-icons { left: 271px; top: 20px; width: 67px; height: 11.5px; }
+  .back { left: 27px; top: 65px; width: 18px; height: 18px; }
+  .logo { left: 116.3px; top: 65px; width: 122.1px; height: 24.1px; }
+  .earn-pill { left: auto; right: 22px; top: 64px; height: 25px; display: inline-flex; align-items: center; gap: 5px; padding: 0 4px 0 8px;   /* coin concentric with the right round end; text not jammed left */ background: #FFEECD; border: 1.5px solid #EED3BF; border-radius: 20px; }
+  .earn-pill .lbl { font-weight: 700; font-size: 13px; line-height: 1.2; color: #6A3619; transform: translateY(-0.5px); }   /* ink centred is +0.25px; set slightly above centre by eye (director) */
+  .earn-pill img { width: 14px; height: 14px; }   /* coin art is centred in its square; 4px above and below */
+  /* the prototype's own animated waves (waveSlowed.json), mirrored left and right */
+  .waves { left: 6.72px; top: 156px; width: 346.56px; height: 90px; overflow: hidden; }
+  .waves .w { position: absolute; top: 0; width: 190px; height: 80px; }
+  .waves .w.l { left: -24px; transform: scale(-1.2, 1.2); }
+  .waves .w.r { right: -24px; transform: scale(1.2, -1.2); }
+  .amount { left: 100px; top: 133px; width: 160px; display: flex; justify-content: center; align-items: baseline; font-family: 'InterRupee', -apple-system, system-ui; font-weight: 800; color: #161B21; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1.2px; }
+  .amount .r { font-size: 28px; } .amount .p { font-size: 20px; color: rgba(34,79,114,.35); }
+  .add-money { left: 106.5px; top: 176.5px; width: 147px; height: 40px; background: #224F72; border-radius: 24px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #fff; font-weight: 700; font-size: 14px; letter-spacing: -0.3px; }
+  .add-money img { width: 12px; height: 12px; }
+  .auto-load { left: 113px; top: 226px; width: 134px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 0; }
+  .auto-load img { width: 16px; height: 14.16px; } .auto-load span { font-weight: 700; font-size: 12px; color: #224F72; }
+  .aicon { top: 276px; width: 60px; height: 60px; border-radius: 21px; background: #fff; display: flex; align-items: center; justify-content: center; }
+  .aicon .tile { width: 52px; height: 52px; border-radius: 17px; background: #E4F3FF; border: 2px solid #C4E6FF; }
+  .glyph { top: 293.4px; width: 25.2px; height: 25.2px; }
+  .alabel { top: 339px; width: 73px; font-weight: 600; font-size: 12px; line-height: 16px; color: #434343; text-align: center; }
+  .pinless { left: 24px; top: 392px; width: 310px; height: 54px; background: #D9F7EE; border-radius: 16px; display: flex; align-items: center; gap: 8px; padding: 10px; box-sizing: border-box; }
+  .pinless .spark { width: 24px; height: 24px; flex: none; }
+  .pinless p { margin: 0; font-weight: 700; font-size: 12px; line-height: 1.4; color: #27755E; } .pinless p .light { font-weight: 500; }
+  .badge { position: absolute; top: -3px; padding: 0 4px; height: 16px; background: #D9F7EE; border: 1px solid #AEE5D5; border-radius: 5px; display: flex; align-items: center; font-weight: 600; font-size: 9px; line-height: 16px; color: #406D60; text-transform: uppercase; white-space: nowrap; }
+  .badge { left: 50%; transform: translateX(-50%); }   /* centred on its tile */
+  .pinless .pointer { position: absolute; left: 50px; top: -11px; width: 19px; height: 16.5px; }
+  .qicon { top: 463.83px; width: 56px; height: 48px; background: #E4F3FF; border-radius: 16px; }
+  .qglyph { top: 477.03px; width: 21.6px; height: 21.6px; }
+  .qlabel { top: 514px; width: 54px; font-weight: 500; font-size: 12px; line-height: 16px; color: #224F72; text-align: center; }
+  .account-id { left: 0; top: 573px; width: 360px; display: flex; align-items: center; justify-content: center; }
+  .account-id .line { width: 41px; height: 1.5px; }
+  .account-id .line.l { background: linear-gradient(90deg, rgba(196,230,255,0) 0%, #C4E6FF 100%); }
+  .account-id .line.r { background: linear-gradient(90deg, #C4E6FF 0%, rgba(196,230,255,0) 100%); }
+  .account-id .pill { display: flex; align-items: center; gap: 6px; padding: 6px 16px; white-space: nowrap; }
+  .account-id .k { font-weight: 600; font-size: 12px; letter-spacing: .48px; color: rgba(34,79,114,.5); }
+  .account-id .v { font-weight: 700; font-size: 12px; letter-spacing: .48px; color: #224F72; }
+  .account-id img { width: 5px; height: 8px; }
+  .rw-head { left: 22px; top: 619.34px; width: 316px; height: 24px; display: flex; align-items: center; justify-content: space-between; }
+  .rw-head .ttl { font-weight: 700; font-size: 12px; letter-spacing: 2.16px; color: #748897; text-transform: uppercase; }
+  .rate-pill { background: #E4F3FF; border-radius: 15px; height: 24px; display: flex; align-items: center; gap: 2px; padding: 0 10px; }
+  .rate-pill img { width: 10px; height: 10px; } .rate-pill span { font-weight: 700; font-size: 12px; color: #224F72; }
+  .celebrate { left: 22px; top: 654.34px; width: 316px; height: 54px; background: #FFF4DC; border-radius: 16px; display: flex; align-items: center; gap: 13px; padding: 10px 16px 10px 14px; box-sizing: border-box; }
+  .celebrate .ic { width: 22.56px; height: 22.56px; flex: none; }
+  .celebrate p { margin: 0; font-size: 12px; color: #875C34; line-height: 1.4; flex: 1; font-weight: 500; } .celebrate p b { font-weight: 700; }
+  .celebrate .chev { width: 8px; height: 8px; flex: none; }
+  .rcard { top: 724.34px; width: 150px; height: 129px; border-radius: 18px; }
+  .rcard .bg { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); }
+  .rcard .inner { position: absolute; left: 21px; top: 19px; width: 110px; display: flex; flex-direction: column; gap: 8px; }
+  .rcard .row { display: flex; align-items: center; gap: 4px; }
+  .rcard .amt { font-weight: 700; font-size: 14px; line-height: 1.2; color: #533A86; }
+  .rcard .row img { width: 16px; height: 16px; }
+  .rcard .div { height: 1px; width: 110px; background: rgba(83,58,134,.18); }
+  .rcard .sub { font-weight: 500; font-size: 12px; line-height: 1.3; color: rgba(83,58,134,.69); }
+  /* callouts (screen space): a white card in the empty side of the frame, pointing at the UI it talks about */
+  #callouts { position: absolute; inset: 0; z-index: 60; pointer-events: none; }
+  #pointers { position: absolute; inset: 0; width: 1920px; height: 1200px; z-index: 59; pointer-events: none; overflow: visible; }
+  /* pointer in the film's sticker language: navy line + dot with a white sticker edge, straight */
+  #pointers path { fill: none; stroke: #1F3D5C; stroke-width: 4; stroke-linecap: round; }
+  #pointers path.case { stroke: #fff; stroke-width: 11; }
+  #pointers circle { fill: #1F3D5C; stroke: none; }
+  #pointers circle.case { fill: #fff; stroke: #fff; stroke-width: 9; }
+  /* results type, written on the grid surface in the scene's perspective (world px; ×~2.35 on screen) */
+  .co { position: absolute; left: 0; top: 0; width: max-content; color: #fff; font-family: -apple-system, 'SF Pro Display', system-ui;
+    padding: 22px 28px 24px; }
+  .co .co-bg { position: absolute; inset: 0; border-radius: 9px; background: rgba(14, 33, 52, .55); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }   /* frosted: the grid behind softens, so the type reads cleaner */   /* the box, its own layer so it can grow by transform */
+  @font-face { font-family: 'ManropeLocal'; font-weight: 700; src: url(/vendor/@fontsource/manrope/files/manrope-latin-700-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'ManropeLocal'; font-weight: 800; src: url(/vendor/@fontsource/manrope/files/manrope-latin-800-normal.woff2) format('woff2'); }
+  .co { display: flex; align-items: center; justify-content: space-between; box-sizing: border-box; width: 560px; height: 224px; padding: 0 52px; }   /* fixed size (CARD in scene.js): number + words left, chart right */   /* the number and words on the left, the chart on the right */
+  .co .txt, .co .viz { position: relative; }
+  .co .txt { width: 320px; }   /* fixed columns: all three cards come out the same width and line up as one list */
+  .co .viz { width: 200px; display: flex; flex-direction: column; align-items: flex-end; }   /* charts sit against the card's right edge, mirroring the number on the left */
+  .co .num { display: block; font: 800 98px/0.9 'ManropeLocal', system-ui; letter-spacing: -2px; color: #fff; font-variant-numeric: tabular-nums; text-shadow: 0 2.5px 0 #0B1A2A; }
+  .co .num .u { font-size: .78em; margin-left: 3px; letter-spacing: 0; }
+  .co .lbl { display: block; max-width: 320px; margin-top: 16px; font: 700 31px/1.2 'ManropeLocal', system-ui; letter-spacing: -.1px; color: #C4D7EA; text-shadow: 0 1.5px 0 #0B1A2A; }
+  .co .viz span { display: block; font: 700 18px/1 'ManropeLocal', system-ui; color: #8FAACA; letter-spacing: .3px; }
+  .co .bars { display: flex; flex-direction: row; align-items: flex-end; gap: 10px; }
+  .co .bars .chev { display: block; width: 28px; height: 28px; }   /* Apr → Sep, level with the middle of the April bar */
+  .co .bars .chev svg { width: 100%; height: 100%; display: block; fill: none; stroke: #8FAACA; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .co .lbl .nw { white-space: nowrap; }   /* never break inside 'Auto-Load' */
+  .co .bars span { text-transform: uppercase; letter-spacing: 1.5px; }   /* APR / SEP */
+  .co .bars .col { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .co .bars .bar { display: block; width: 72px; border-radius: 5px 5px 2px 2px; }
+  .co .bars .bar.apr { background: #4A6B8C; }
+  .co .bars .bar.sep { background: #fff; }
+  .co .people .group { position: relative; width: 196px; height: 128px; }
+  .co .people .group .pp { position: absolute; width: 50px; height: 74px; }
+  .co .people .group .p0 { left: 6px; top: 0; } .co .people .group .p1 { left: 73px; top: 0; } .co .people .group .p2 { left: 140px; top: 0; }   /* back row */
+  .co .people .group .p3 { left: 38px; top: 54px; } .co .people .group .p4 { left: 106px; top: 54px; }   /* front row, between them */
+  .co .people .group svg { stroke: #1A2D44; stroke-width: 3px; paint-order: stroke; }   /* a thin card-coloured edge, so front figures read in front of back ones */
+  .co .people .pp { display: block; width: 38px; height: 56px; }
+  .co .viz.people { width: 236px; }
+  .co:has(.people) .txt { width: 284px; }   /* this card's words are short enough: give the picture more room */
+  .co .people span { font-size: 24px; color: #DCE8F4; letter-spacing: .2px; }   /* '1 in 5' reads as part of the message, not a footnote */
+  .co .people svg { width: 100%; height: 100%; display: block; fill: #4A6B8C; }
+  .co .people .pp.on svg { fill: color-mix(in srgb, #fff calc(var(--fill, 0) * 100%), #4A6B8C); }
+
+  @font-face { font-family: 'InterLocal'; font-weight: 400; src: url(/vendor/@fontsource/inter/files/inter-latin-400-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'InterLocal'; font-weight: 500; src: url(/vendor/@fontsource/inter/files/inter-latin-500-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'InterLocal'; font-weight: 600; src: url(/vendor/@fontsource/inter/files/inter-latin-600-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'InterLocal'; font-weight: 700; src: url(/vendor/@fontsource/inter/files/inter-latin-700-normal.woff2) format('woff2'); }
+  @font-face { font-family: 'InterLocal'; font-weight: 800; src: url(/vendor/@fontsource/inter/files/inter-latin-800-normal.woff2) format('woff2'); }
+  /* ₹ comes from Inter (the system font's rupee is a different shape); only U+20B9 is taken from it */
+  @font-face { font-family: 'InterRupee'; font-weight: 400; src: url(/vendor/@fontsource/inter/files/inter-latin-ext-400-normal.woff2) format('woff2'); unicode-range: U+20B9; }
+  @font-face { font-family: 'InterRupee'; font-weight: 500; src: url(/vendor/@fontsource/inter/files/inter-latin-ext-500-normal.woff2) format('woff2'); unicode-range: U+20B9; }
+  @font-face { font-family: 'InterRupee'; font-weight: 600; src: url(/vendor/@fontsource/inter/files/inter-latin-ext-600-normal.woff2) format('woff2'); unicode-range: U+20B9; }
+  @font-face { font-family: 'InterRupee'; font-weight: 700; src: url(/vendor/@fontsource/inter/files/inter-latin-ext-700-normal.woff2) format('woff2'); unicode-range: U+20B9; }
+  @font-face { font-family: 'InterRupee'; font-weight: 800; src: url(/vendor/@fontsource/inter/files/inter-latin-ext-800-normal.woff2) format('woff2'); unicode-range: U+20B9; }
+  /* ---------- BEFORE: the old PayZapp Wallet, rebuilt to match the case-study screenshot (720px wide → 360 screen
+     units; every position below is the screenshot's /2, pushed down 46 to clear the status bar). Colours sampled from it. */
+  .bscr { position: absolute; inset: 0; border-radius: 46px; overflow: hidden; background: #fff; font-family: 'InterLocal', -apple-system, system-ui; color: #444; }
+  .bscr > * { position: absolute; }
+  .bscr .hdr { left: 0; top: 0; width: 360px; height: 420px;
+    background: radial-gradient(70% 50% at 0% 100%, rgba(42,128,217,.9), rgba(42,128,217,0)), linear-gradient(180deg, #4C5FDE 0%, #3A62DE 35%, #1A66DD 100%); }
+  .bscr .sb-t { left: 18px; top: 18px; width: 54px; text-align: center; font: 600 15px/18px -apple-system, system-ui; color: #fff; }
+  .bscr .sb-i { left: 271px; top: 20px; width: 67px; height: 11.5px; filter: invert(1); }
+  .bscr .back { left: 26px; top: 72px; width: 20px; height: 20px; }
+  .bscr .ttl { left: 0; right: 0; top: 72px; text-align: center; font: 600 16px/20px 'InterLocal', system-ui; color: #fff; }
+  .bscr .help { left: 314px; top: 72px; width: 20px; height: 20px; border-radius: 10px; background: #fff; color: #3B5FD8; font: 700 12px/20px 'InterLocal', system-ui; text-align: center; }
+  .bscr .card { left: 24px; top: 116px; width: 312px; height: 198px; border-radius: 11px; overflow: hidden;
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 1px, rgba(255,255,255,0) 1px 3px), linear-gradient(100deg, #7CCCF4 0%, #8FD5F6 55%, #A3DFF9 100%);
+    box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.9); }
+  .bscr .card > * { position: absolute; }
+  .bscr .card svg { left: 0; top: 0; }
+  .bscr .hdfc { left: 11px; top: 11px; height: 16.5px; padding: 0 5px 0 19px; background: #024C93; border: 1.5px solid #fff; color: #fff; font: 800 9.5px/13.5px 'InterLocal', system-ui; letter-spacing: .3px; }
+  .bscr .hdfc::before { content: ''; position: absolute; left: 0; top: 0; width: 13.5px; height: 13.5px; background: #E61A23; }
+  .bscr .hdfc::after { content: ''; position: absolute; left: 3.5px; top: 3.5px; width: 6.5px; height: 6.5px; background: #fff; box-shadow: inset 0 0 0 2px #024C93; }
+  .bscr .pz { right: 12px; top: 16px; height: 16px; display: flex; align-items: center; gap: 3px; font: italic 900 15px/1 'InterLocal', system-ui; letter-spacing: -.4px; }
+  .bscr .pz i { width: 11px; height: 11px; background: #E61A23; box-shadow: inset 0 0 0 2.5px #00337F; }
+  .bscr .pz .p { color: #00337F; } .bscr .pz .z { color: #E61A23; }
+  .bscr .pre { right: 12px; top: 40px; font: 700 7.5px/1 'InterLocal', system-ui; letter-spacing: .4px; color: #00337F; }
+  .bscr .num { left: 12px; top: 171px; font: 600 16px/1 'InterLocal', system-ui; color: #fff; word-spacing: 3px; }
+  .bscr .visa { right: 12px; top: 167px; font: italic 800 23px/1 'InterLocal', system-ui; color: #fff; letter-spacing: -.5px; }
+  .bscr .bbtn { top: 330px; width: 148px; height: 40px; border-radius: 8px; background: rgba(255,255,255,.22); color: #fff; display: flex; align-items: center; justify-content: center; gap: 6px; font: 500 14px/1 'InterLocal', system-ui; }
+  .bscr .bbtn svg { width: 19px; height: 19px; }
+  .bscr .sheet { left: 0; top: 393.5px; width: 360px; height: 600px; border-radius: 20px 20px 0 0; background: #fff; }
+  .bscr .sheet > * { position: absolute; }
+  .bscr .wb { left: 24px; top: 28px; font: 400 11.7px/1 'InterLocal', system-ui; letter-spacing: .2px; color: #696969; }
+  .bscr .wamt { left: 24px; top: 47px; font: 700 20.3px/1 'InterLocal', system-ui; color: #444; letter-spacing: -.3px; }
+  .bscr .wadd { left: 219px; top: 31.5px; width: 117px; height: 31px; border-radius: 8px; background: #3995FF; color: #fff; display: flex; align-items: center; justify-content: center; gap: 5px; font: 600 12.1px/1 'InterLocal', system-ui; }
+  .bscr .div { left: 24px; width: 312px; top: 82px; height: 1px; background: #D2E7FF; }
+  .bscr .row { left: 24px; width: 312px; height: 40px; }
+  .bscr .row i { position: absolute; left: 0; top: 0; width: 40px; height: 40px; border-radius: 10px; background: #E7F4FF; display: flex; align-items: center; justify-content: center; }
+  .bscr .row i svg { width: 21px; height: 21px; }
+  .bscr .row b { position: absolute; left: 48.5px; top: 5px; font: 600 14px/1 'InterLocal', system-ui; color: #0066B4; white-space: nowrap; }
+  .bscr .row span { position: absolute; left: 48.5px; top: 25.5px; font: 400 12px/1 'InterLocal', system-ui; color: #505050; white-space: nowrap; }
+
+  /* before / after labels above the two phones (screen space) */
+  #baLabels { position: absolute; inset: 0; z-index: 60; pointer-events: none; }
+  .ba-label { position: absolute; text-align: center; color: #fff; white-space: nowrap; }
+  .ba-label b { display: block; font: 600 68px/1 -apple-system, 'SF Pro Display', system-ui; letter-spacing: 0px; }
+  
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bg"></div>
+  <div id="persp">
+    <div id="world">
+      <div id="grid" data-name="Grid"></div>
+      <div id="floorShadow" data-name="Floor shadow"></div>
+    </div>
+  </div>
+  <div id="vignette" data-name="Vignette"></div>
+  <div id="persp3"><div id="world3" data-name="Results type"></div></div>
+  <!-- the phone lives in its own 3D layer so a 2D sticker outline can be traced around its rendered silhouette -->
+  <div id="outline" data-name="White outline">
+  <div id="persp2">
+    <div id="world2">
+      <div id="phone" data-name="Phone">
+        <div id="slabs" data-name="Phone body"></div>
+        <div class="bezel" data-name="Bezel"></div>
+        <div id="backplate" data-name="Back"><div class="cam-bump" data-name="Camera island"><div class="cap"></div><div class="lens" style="left:12px;top:12px"><div class="glass"></div></div><div class="lens" style="left:12px;top:82px"><div class="glass"></div></div></div><div class="flash" data-name="Flash"></div></div>
+        <div id="screen" data-name="Screen">
+          <div class="scr-bg"></div>
+
+          <!-- data-grp: build group · data-z: resting height · data-sh: shadow kind · data-g: skeleton kind -->
+          <div class="pc sb-time" data-grp="header" data-g="bar" data-name="Status time">9:41</div>
+          <img class="pc sb-icons" data-grp="header" src="assets/statusbar-right.svg" data-name="Status icons">
+          <div id="clip" data-name="Screen content"><div id="content"><div class="top-wash"></div>
+          <img class="pc back" data-grp="header" data-sh="drop" src="assets/ic-back.svg" data-name="Back">
+          <img class="pc logo" data-grp="header" data-z="2" data-sh="drop" data-g="bar" src="assets/header-logo.svg" data-name="Zapp Account logo">
+          <div class="pc earn-pill" data-grp="header" data-z="3" data-sh="box" data-g="box" data-name="Earn"><span class="lbl">Earn</span><img src="assets/reward-minimal.svg"></div>
+
+          <div class="pc waves" data-grp="balance" data-fly="0" data-name="Waves"><div class="w l"></div><div class="w r"></div></div>
+          <div class="pc amount" data-grp="balance" data-z="2" data-g="bar" data-name="Balance"><span class="r">₹0</span><span class="p">.00</span></div>
+          <div class="pc add-money" data-grp="balance" data-z="5" data-sh="box" data-g="box" data-name="Add Money"><img src="assets/ic-plus.svg">Add Money</div>
+          <div class="pc auto-load" data-grp="balance" data-g="bar" data-name="Auto-Load"><img src="assets/ic-autoload.svg"><span>Setup Auto-Load</span></div>
+
+          <div class="pc aicon" style="left:53px" data-grp="actions" data-z="2" data-sh="box" data-g="box" data-name="Scan and Pay tile"><div class="tile"></div><span class="badge">Pin-less</span></div>
+          <div class="pc aicon" style="left:150px" data-grp="actions" data-z="2" data-sh="box" data-g="box" data-name="Send Money tile"><div class="tile"></div></div>
+          <div class="pc aicon" style="left:247px" data-grp="actions" data-z="2" data-sh="box" data-g="box" data-name="Transfer tile"><div class="tile"></div><span class="badge">₹0 Fee</span></div>
+          <img class="pc glyph" style="left:71.4px;width:23.2px;height:23.2px" data-grp="actions" data-z="2.6" data-sh="drop" data-icon src="assets/ic-scan-glyph.svg" data-name="Scan glyph">
+          <img class="pc glyph" style="left:167.4px" data-grp="actions" data-z="2.6" data-sh="drop" data-icon src="assets/ic-send-glyph.svg" data-name="Send glyph">
+          <img class="pc glyph" style="left:260.6px;top:292.8px;width:30.9px;height:26.5px" data-grp="actions" data-z="2.6" data-sh="drop" data-icon src="assets/ic-transfer-glyph.svg" data-name="Transfer glyph">
+          <div class="pc alabel" style="left:46.5px" data-grp="actions" data-g="bar">Scan and Pay</div>
+          <div class="pc alabel" style="left:143.5px" data-grp="actions" data-g="bar">Send Money<br>to Anyone</div>
+          <div class="pc alabel" style="left:240.5px" data-grp="actions" data-g="bar">Transfer to Account</div>
+
+          <div class="pc pinless" data-grp="nudge" data-z="3" data-sh="box" data-g="box" data-name="Soft nudge">
+            <img class="pointer" src="assets/banner-pointer.svg"><img class="spark" src="assets/ic-sparkle.svg">
+            <p>Experience faster and secure payments <span class="light">without a PIN</span></p>
+          </div>
+
+          <div class="pc qicon" style="left:25.15px" data-grp="quick" data-z="2" data-sh="box" data-g="box"></div>
+          <div class="pc qicon" style="left:109.82px" data-grp="quick" data-z="2" data-sh="box" data-g="box"></div>
+          <div class="pc qicon" style="left:194.49px" data-grp="quick" data-z="2" data-sh="box" data-g="box"></div>
+          <div class="pc qicon" style="left:279.16px" data-grp="quick" data-z="2" data-sh="box" data-g="box"></div>
+          <img class="pc qglyph" style="left:42.35px" data-grp="quick" data-z="2.6" data-sh="drop" data-icon src="assets/ic-payment-history.svg">
+          <img class="pc qglyph" style="left:127.02px" data-grp="quick" data-z="2.6" data-sh="drop" data-icon src="assets/ic-tappay.svg">
+          <img class="pc qglyph" style="left:211.69px" data-grp="quick" data-z="2.6" data-sh="drop" data-icon src="assets/ic-view-card.svg">
+          <img class="pc qglyph" style="left:296.36px" data-grp="quick" data-z="2.6" data-sh="drop" data-icon src="assets/ic-manage-account.svg">
+          <div class="pc qlabel" style="left:26.15px" data-grp="quick" data-g="bar">Payment<br>History</div>
+          <div class="pc qlabel" style="left:110.82px" data-grp="quick" data-g="bar">Tap and<br>Pay</div>
+          <div class="pc qlabel" style="left:195.49px" data-grp="quick" data-g="bar">View Card</div>
+          <div class="pc qlabel" style="left:280.16px" data-grp="quick" data-g="bar">Manage<br>Account</div>
+
+          <div class="pc account-id" data-grp="footer" data-name="Account ID"><div class="line l"></div><div class="pill"><span class="k">Your Zapp Account ID</span><span class="v">9343876654@pzw</span><img src="assets/ic-chevron-right-sm.svg"></div><div class="line r"></div></div>
+          <div class="pc rw-head" data-grp="footer" data-g="bar" data-name="Rewards header"><span class="ttl">Rewards</span><div class="rate-pill"><img src="assets/reward-minimal.svg"><span>1 = ₹1</span></div></div>
+          <div class="pc celebrate" data-grp="footer" data-z="3" data-sh="box" data-g="box" data-name="Rewards banner"><img class="ic" src="assets/ic-celebrate.svg"><p>You have earned cashpoints on <b>90% of your transactions</b></p><img class="chev" src="assets/ic-chev8.svg"></div>
+          <div class="pc rcard" style="left:22px" data-grp="footer" data-z="3" data-sh="drop" data-g="box"><img class="bg" src="assets/reward-card-purple.svg"><div class="inner"><div class="row"><span class="amt">Earn 51</span><img src="assets/coin-16.svg"></div><div class="div"></div><div class="sub">On making 5 transactions using Zapp Account</div></div></div>
+          <div class="pc rcard" style="left:188px" data-grp="footer" data-z="3" data-sh="drop" data-g="box"><img class="bg" src="assets/reward-card-purple.svg"><div class="inner"><div class="row"><span class="amt">Earn 23</span><img src="assets/coin-16.svg"></div><div class="div"></div><div class="sub">On broadband bill payment</div></div></div>
+
+          </div></div>
+          <div class="island" data-name="Dynamic Island"></div>
+          <div class="home-ind" data-name="Home indicator"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</div>
+<svg width="0" height="0" style="position:absolute"><filter id="stickerF" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB"><feMorphology in="SourceAlpha" operator="dilate" radius="2" result="c1"/><feMorphology in="c1" operator="erode" radius="2" result="closed"/><feMorphology in="closed" operator="dilate" radius="9" result="d"/><feFlood flood-color="#ffffff"/><feComposite in2="d" operator="in" result="o"/><feFlood flood-color="#26313A"/><feComposite in2="closed" operator="in" result="fill"/><feMerge><feMergeNode in="o"/><feMergeNode in="fill"/><feMergeNode in="SourceGraphic"/></feMerge></filter></svg>
+<script src="/vendor/lottie-web/build/player/lottie_svg.min.js"></script>
+<script type="module" src="scene.js"></script>
+</body>
+</html>

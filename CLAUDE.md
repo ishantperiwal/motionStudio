@@ -32,19 +32,24 @@ those notes into precise scene changes and verify them in rendered frames.
 
 ## Working a note
 1. Read the notes: `notes/<scene>/*.json`, oldest first; skip ones that already have a `reply`
-   unless asked. Look at the crop `<id>.png`. A note gives `frame` or `range`, `text`, `region`
+   unless asked. Always look at the crop `<id>.png` before acting, not just the JSON: it is often the only
+   evidence of what they mean (spot notes on blank areas have empty `elements`), and reading the text alone
+   leads to misreadings. Also open every image listed in `refs` — reference
+   images the person pasted into the note (⌘V) to show the style or result they want. A note gives `frame` or `range`, `text`, `region`
    (stage px), `elements` (data-names / text in the box, best match first — a tight box puts the element
    they mean at the top), `beats` (names in `scene.js`) and
    optionally `curve` — a cubic-bezier the person picked to show the easing they want; apply it
    exactly unless the text says otherwise.
 2. Find the beat(s) in `scenes/<scene>/scene.js` and make the smallest change that does what the
    note says.
-3. Verify before reporting:
-   - `npm run render -- <scene> --frames a,b,c` (PNGs in `out/<scene>-frames/`) and look at them;
-   - `npm run render -- <scene> --sheet a-b:step` for a contact sheet across the beat;
-   - `npm run probe -- <scene> "<data-name>" --range a-b` for speed curves: no unintended hard
-     stops, abrupt starts or jumps.
-4. Once a note is done, delete it (`<id>.json` and `<id>.png`), add a 1–2 line item to
+3. Verify lightly, then report. Check the change with one or two targeted renders of the affected
+   frames; the person reviews playback themselves and will say what's off. Don't scan the whole film or
+   run long renders unless asked — it costs their time and adds little.
+   - `npm run render -- <scene> --frames a,b` (PNGs in `out/<scene>-frames/`) and look at them;
+   - only when the change is about motion: `npm run probe -- <scene> "<data-name>" --range a-b` for
+     speed curves (no unintended hard stops, abrupt starts or jumps), or `--sheet a-b:step` for a
+     contact sheet across the beat.
+4. Once a note is done, delete it (`<id>.json`, `<id>.png` and its `refs` files), add a 1–2 line item to
    `notes/<scene>/_checklist.json` (`{ items: [{ id, frame, range?, region?, text }] }` — copy
    frame/range/region from the note) saying what changed and where to look, and tell the person in chat. They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
    with `followUp` set to the item's text (treat it as feedback on that change).
