@@ -8,6 +8,6 @@ click for the full preview, its parts at a glance, and its notes. Any folder her
 
 To add one, see [REGISTERING.md](REGISTERING.md).
 
-| Theme | What it's for | Source |
+| Theme | What it's for | Made for |
 |---|---|---|
-| [Thumbnail explainer](thumbnail-explainer/THEME.md) | One product change explained through the real UI and a few big numbers; reads at thumbnail size; loops | `scenes/zapp-film` |
+| [Thumbnail explainer](thumbnail-explainer/THEME.md) | One product change explained through the real UI and a few big numbers; reads at thumbnail size; loops | Zapp Account case study |

@@ -1,8 +1,8 @@
 # Thumbnail explainer
 
 A product film that still reads at thumbnail size. It explains one product change through the real UI and a few
-big numbers, never through slides. Source: `scenes/zapp-film` (Zapp Account case study), 624 frames at 25 fps, 1920×1200,
-seamless loop. Watch `preview.mp4`; `aspects.png` shows each part below at its frame.
+big numbers, never through slides. Made for the Zapp Account case study (scene `zapp-film`, kept in that project, not in the framework),
+624 frames at 25 fps, 1920×1200, seamless loop. Watch `preview.mp4`; `aspects.png` shows each part below at its frame.
 
 ## What makes it work
 - **The product carries the story.** The phone and its real UI are on screen almost all the time. There are no title cards or bullet points, and no labels explaining what you are looking at.
@@ -15,7 +15,7 @@ seamless loop. Watch `preview.mp4`; `aspects.png` shows each part below at its f
 - **Seamless loop.** The last frame leads straight into frame 0, so it can autoplay on repeat.
 
 ## Aspects (point at any of these on its own)
-| # | Aspect | Frames | What happens | Beats in `scene.js` |
+| # | Aspect | Frames | What happens | Beats (in the source scene, where available) |
 |---|---|---|---|---|
 | 1 | Arrival | 0–42 | Phone rises in from bottom right with one full turn while the camera pushes in; lands with it | `phone.fly`, `cam.zoom`, `cam.frame` |
 | 2 | Build | 38–130 | UI assembles component by component, each sliding up as one piece (tile + glyph + label + badge together) | `screen.wash`, `fly.*` |

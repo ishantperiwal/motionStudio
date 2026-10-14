@@ -16,7 +16,8 @@ and rejected versions stay out.
 | `aspects.png` | optional | Its parts at a glance, each labelled with its frame |
 
 Any kind of video works (a Motion Studio scene, a plain-JavaScript frame-by-frame story, …) as long as it has
-a preview. If it lives in this repo, keep its source here too (e.g. `scenes/<id>`), so the parts can be read in code.
+a preview. Scenes stay with their project and aren't shipped, so the theme has to stand on its own:
+`THEME.md` and the preview should carry everything worth reusing.
 
 ## What goes in THEME.md
 1. `# Name`, the first line.

@@ -6,3 +6,7 @@ notes/*/*.json
 notes/*/*.png
 notes/_go.json
 !notes/.gitkeep
+
+# scenes are per-project work (like notes): they stay on your machine
+scenes/*
+!scenes/.gitkeep
