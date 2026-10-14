@@ -58,6 +58,10 @@ While a session is working notes, keep `node tools/wait-for-notes.mjs` running i
 when the editor's "Send to Claude" button is pressed — then work the notes and start it again.
 The dev server live-reloads the editor when scene files or notes change.
 
+## Themes
+`themes/` holds finished films kept as references (gallery at `/themes/`). Read them only when asked; to
+register a new one, follow `themes/REGISTERING.md`.
+
 ## Rendering
 `npm run render -- <scene>` → `out/<scene>.mp4`. Options: `--range a-b`, `--blur 8` (sub-frame motion
 blur), `--shutter 0.5`, `--scale 2` (supersampled), `--workers N`, `--crf 16`.
