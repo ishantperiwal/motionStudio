@@ -28,6 +28,9 @@ those notes into precise scene changes and verify them in rendered frames.
 - Camera moves and the cursor moves that happen with them go in the same beat (same start/end).
 - WebGL / canvas layers (`pixiLayer`, `threeLayer`, `p5Layer`) and `lottieKit` never run their own loop;
   they render in a frame hook. In p5, draw from the frame `f`, not `p.frameCount` (random/noise are reseeded each frame).
+- Fonts: Inter and Manrope ship as defaults (`/vendor/@fontsource/inter|manrope/files/*.woff2`, via `@font-face`);
+  any other font is fine — `npm install @fontsource/<name>` or local files in the scene. Await `document.fonts.load(...)`
+  before `s.ready()` so renders never capture the fallback font.
 - SVGs from Affinity: `loadSvg()`; Affinity layer names become `data-name`, pivots default to the
   artwork centre. Keep exports flat (no effects).
 
