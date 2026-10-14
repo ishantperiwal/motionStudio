@@ -67,7 +67,7 @@ everything animates through beats (no `gsap.to`, no timers, no `Math.random` —
 
 Kits (`runtime/kits/`): `camera` (focus + zoom views), `cursor` (collaborator cursor, clicks,
 proportional tilt, optional name tag), `typer` (uneven seeded typing), `loadSvg` (Affinity SVGs),
-`sketch` / `shotHud` (animatics). Layers: `pixiLayer`, `threeLayer`. Tokens: `tokens/motion.json`.
+`sketch` / `shotHud` (animatics). Layers: `pixiLayer`, `threeLayer`, `p5Layer`. Lottie: `lottieKit`. Tokens: `tokens/motion.json`.
 
 ## Scenes
 None ship with the studio. Create one with `npm run new-scene -- my-film`; each scene lives in

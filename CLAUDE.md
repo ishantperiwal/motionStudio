@@ -6,7 +6,7 @@ those notes into precise scene changes and verify them in rendered frames.
 
 ## Layout
 - `runtime/` — `studio.js` (master clock, beats, hit-testing), `ease.js` (bezier + tokens),
-  `kits/` (camera, cursor, typing, svg), `layers/` (pixi, three). Shared by every scene.
+  `kits/` (camera, cursor, typing, svg, sketch, lottie), `layers/` (pixi, three, p5). Shared by every scene.
 - `scenes/<id>/` — `index.html` (markup + import map), `scene.js` (beats), `style.css`, `assets/`.
   Start new ones with `npm run new-scene -- <id>`.
 
@@ -26,7 +26,8 @@ those notes into precise scene changes and verify them in rendered frames.
 - Give beats short dotted names (`group.action`) and a `note:`; give important elements a
   `data-name` — the editor and notes refer to things by these names.
 - Camera moves and the cursor moves that happen with them go in the same beat (same start/end).
-- WebGL layers (`pixiLayer`, `threeLayer`) never run their own loop; they render in a frame hook.
+- WebGL / canvas layers (`pixiLayer`, `threeLayer`, `p5Layer`) and `lottieKit` never run their own loop;
+  they render in a frame hook. In p5, draw from the frame `f`, not `p.frameCount` (random/noise are reseeded each frame).
 - SVGs from Affinity: `loadSvg()`; Affinity layer names become `data-name`, pivots default to the
   artwork centre. Keep exports flat (no effects).
 

@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(dir, 'index.html'), `<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>${id}</title>
-<script type="importmap">{"imports":{"gsap":"/vendor/gsap/index.js","gsap/":"/vendor/gsap/","roughjs":"/vendor/roughjs/bundled/rough.esm.js","pixi.js":"/vendor/pixi.js/dist/pixi.mjs","three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","@studio/":"/runtime/"}}</script>
+<script type="importmap">{"imports":{"gsap":"/vendor/gsap/index.js","gsap/":"/vendor/gsap/","roughjs":"/vendor/roughjs/bundled/rough.esm.js","pixi.js":"/vendor/pixi.js/dist/pixi.mjs","three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","lottie-web":"/vendor/lottie-web/build/player/esm/lottie_svg.min.js","@studio/":"/runtime/"}}</script>
 <link rel="stylesheet" href="/runtime/stage.css">
 <link rel="stylesheet" href="style.css">
 </head>
