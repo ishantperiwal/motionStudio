@@ -5,14 +5,14 @@
 //   npm run probe -- my-film "<data-name>" --range 270-330
 //   npm run probe -- my-film "#cam" --range 600-680 --scale     (camera: tracks zoom too)
 import { chromium } from 'playwright';
-import { startServer } from '../server/dev.mjs';
+import { startServer, CHROME } from '../server/dev.mjs';
 
 const [scene, target] = process.argv.slice(2);
 const opt = (k, d) => { const i = process.argv.indexOf('--' + k); return i < 0 ? d : process.argv[i + 1]; };
 if (!scene || !target) { console.log('usage: npm run probe -- <scene> <data-name | selector> [--range a-b]'); process.exit(1); }
 
 const server = await startServer({ port: 0, watch: false, quiet: true });
-const browser = await chromium.launch({ channel: 'chrome' });
+const browser = await chromium.launch(CHROME);
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 await page.goto(`http://localhost:${server.address().port}/scenes/${scene}/?render`);
 await page.waitForFunction(() => window.animationReady === true);

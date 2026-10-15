@@ -96,6 +96,12 @@ export async function studio(config) {
     return rec;
   }
 
+  // Some things finish a frame asynchronously (a <video> seeking to its time). A scene hands those promises to
+  // s.waitFor(); capture (render, preview frames, note crops) awaits window.__settle() after each seek.
+  let pendingP = [];
+  const waitFor = (p) => { pendingP.push(p); return p; };
+  window.__settle = async () => { while (pendingP.length) await Promise.all(pendingP.splice(0)); };
+
   function seek(f) {
     current = Math.max(0, Math.min(frames - 1, f));
     tl.seek(current / fps, false);
@@ -120,18 +126,19 @@ export async function studio(config) {
 
   // What is under a region (stage px) at the current frame?
   function hitTest(region, range = [current, current]) {
+    const gb = (el) => { const r = el.getBoundingClientRect(), k = viewK; return { left: r.left / k, top: r.top / k, right: r.right / k, bottom: r.bottom / k, width: r.width / k, height: r.height / k }; };   // stage px, whatever the view scale
     const hit = (r) => r.width > 0 && r.height > 0 && r.right > region.x && r.left < region.x + region.w && r.bottom > region.y && r.top < region.y + region.h;
     const visible = (el) => !el.checkVisibility || el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
     const inRange = (r) => r.f1 >= range[0] - 2 && r.f0 <= range[1] + 2;
     const beatsHit = [];
     for (const r of beats) {
       if (!inRange(r)) continue;
-      const on = [...r.targets].some((el) => el.isConnected && visible(el) && hit(el.getBoundingClientRect()));
+      const on = [...r.targets].some((el) => el.isConnected && visible(el) && hit(gb(el)));
       if (on || r.tags.has('camera')) beatsHit.push({ name: r.name, f0: r.f0, f1: r.f1, via: on ? 'region' : 'camera' });
     }
     const area = region.w * region.h, out = [];
     for (const el of stage.querySelectorAll('*')) {
-      const rc = el.getBoundingClientRect();
+      const rc = gb(el);
       if (!hit(rc) || !visible(el)) continue;
       const ix = Math.max(0, Math.min(rc.right, region.x + region.w) - Math.max(rc.left, region.x));
       const iy = Math.max(0, Math.min(rc.bottom, region.y + region.h) - Math.max(rc.top, region.y));
@@ -147,6 +154,15 @@ export async function studio(config) {
     return { beats: beatsHit, elements: out.slice(0, 10) };
   }
 
+  // The editor shows the scene at its viewport size: drawing the stage scaled down here (rather than full size, then
+  // shrunk from outside) keeps the live view light on the GPU. Positions reported to the editor stay in stage px.
+  let viewK = 1;
+  function setView(k) {
+    viewK = k;
+    stage.style.transformOrigin = '0 0';
+    stage.style.transform = k === 1 ? '' : `scale(${k})`;
+  }
+
   function fit() {
     if (MODE !== 'play') return;
     const k = Math.min(innerWidth / width, innerHeight / height);
@@ -154,7 +170,7 @@ export async function studio(config) {
   }
 
   const api = {
-    id, width, height, fps, tl, beat, seek,
+    id, width, height, fps, tl, beat, seek, waitFor,
     beats: byName,
     get frames() { return frames; },
     /** Per-frame hook (after tweens are applied). Higher order runs later; layers render at 100. */
@@ -171,7 +187,7 @@ export async function studio(config) {
       window.seek = seek;
       window.__studio = {
         id, width, height, fps, frames, mode: MODE, tokens: getTokens(),
-        seek, frame: () => current, beats: () => beats.map(beatInfo), hitTest,
+        seek, frame: () => current, beats: () => beats.map(beatInfo), hitTest, setView,
       };
       window.animationReady = true;
       if (window.parent !== window) window.parent.postMessage({ type: 'studio:ready', id }, '*');

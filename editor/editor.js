@@ -21,7 +21,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const r2 = (v) => Math.round(v * 100) / 100;
 const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-const frameEl = $('#frame'), view = $('#view'), overlay = $('#overlay'), panel = $('#panel');
+const frameEl = $('#frame'), playImg = $('#playImg'), view = $('#view'), overlay = $('#overlay'), panel = $('#panel');
 const ruler = $('#ruler'), lanes = $('#lanes'), playhead = $('#playhead'), rangeBox = $('#rangeBox');
 const LABEL_W = 200;
 
@@ -60,6 +60,8 @@ function loadScene() {
     return;
   }
   frameEl.removeAttribute('srcdoc');
+  st.loadId = (st.loadId || 0) + 1;   // playback frames rendered before this load are stale
+  playImg.hidden = true; cachedSet = new Set();
   frameEl.src = `/scenes/${st.scene}/?editor&t=${Date.now()}`;
   $('#openScene').href = `/scenes/${st.scene}/`;
 }
@@ -77,7 +79,10 @@ function fit() {
   const pad = innerHeight > 700 ? 40 : 16, toolsW = 72;   // keep the frame clear of the floating tools on the left
   st.k = Math.max(0.05, Math.min((wrap.width - pad - toolsW) / st.w, (wrap.height - pad) / st.h));
   view.style.width = st.w * st.k + 'px'; view.style.height = st.h * st.k + 'px';
-  frameEl.style.transform = `scale(${st.k})`;
+  if (st.S?.setView) {   // the scene draws itself at the view size (light on the GPU); the iframe is just that size
+    frameEl.style.width = st.w * st.k + 'px'; frameEl.style.height = st.h * st.k + 'px'; frameEl.style.transform = 'none';
+    st.S.setView(st.k);
+  } else frameEl.style.transform = `scale(${st.k})`;
   drawOverlay();
 }
 addEventListener('resize', () => { fit(); layoutTimeline(); });
@@ -86,14 +91,11 @@ addEventListener('resize', () => { fit(); layoutTimeline(); });
 let lastInt = -1, hashTimer = null;
 function seek(f, force = false) {
   st.frame = clamp(f, 0, st.frames - 1);
-  st.S?.seek(st.frame);
+  if (!st.playing) showFrame(Math.round(st.frame));   // while playing, playLoop shows the frames
   if (st.rec) growRecording();
   const fi = Math.floor(st.frame);
   if (fi === lastInt && !force) return;
   lastInt = fi;
-  $('#frameNo').textContent = fi;
-  $('#frameTot').textContent = `/ ${st.frames - 1}`;
-  $('#secs').textContent = (st.frame / st.fps).toFixed(2) + 's';
   if (st.playing || !dragging) follow();
   placePlayhead();
   for (const lane of lanes.children) {
@@ -114,10 +116,101 @@ function setPlaying(p) {
   frameTimes = []; showRate();
   if (p && !was) playLoop();
 }
-// Playback never skips: it shows every whole frame in order, and only moves on once the current frame has
-// been painted (two animation frames after the seek). At most real time (fps); if the scene is too heavy to
-// paint that fast, it plays slower — exactly what export will show — and a red badge reports the real rate.
+// What the view shows:
+//  · playing: frames rendered by the server exactly the way export renders them (/api/frame), every frame in order,
+//    each only once complete — at most real time; when frames aren't ready it waits (a red badge reports the rate).
+//  · scrubbing / stepping: the original live view, upgraded where we can. Frames around the playhead are preloaded
+//    as compressed JPEGs (PRELOAD either side, MEM at most — a few MB) and show complete at once; anything else shows
+//    the live scene, as before. The frame the playhead rests on (SETTLE ms) is then shown complete.
+// The server keeps frames near the playhead on disk (green on the cache bar); memory here stays a fixed MEM frames.
 let playTimer = null, frameTimes = [];
+// rendered frames held here: f → Promise<object URL of a JPEG>, at most MEM, nearest the playhead
+const AHEAD = 10, MEM = 64, PRELOAD = 30, SETTLE = 150, rendered = new Map(), ready = new Map();   // ready: f → URL of a fetched JPEG (compressed; decoded only when shown)
+let renderedKey = '';
+const viewScale = () => Math.min(1, Math.max(0.25, Math.round(st.k * devicePixelRatio * 4) / 4));   // as the server rounds it
+const frameQuery = () => `scene=${encodeURIComponent(st.scene)}&scale=${viewScale()}&focus=${Math.round(st.frame)}`;
+function renderedFrame(f) {
+  const key = `${st.scene}|${st.loadId}|${viewScale()}`;
+  if (key !== renderedKey) { rendered.forEach((pr) => pr.then(URL.revokeObjectURL, () => {})); rendered.clear(); ready.clear(); renderedKey = key; }
+  if (!rendered.has(f)) {
+    const pr = fetch(`/api/frame?${frameQuery()}&f=${f}`)
+      .then((r) => { if (!r.ok) throw new Error(`frame ${f}: ${r.status}`); return r.blob(); })
+      .then((b) => { const u = URL.createObjectURL(b); if (rendered.get(f) === pr) ready.set(f, u); return u; });   // kept compressed (~100 KB): only the frame on screen gets decoded
+    pr.catch(() => { if (rendered.get(f) === pr) rendered.delete(f); });   // let a failed frame be retried
+    rendered.set(f, pr);
+    if (rendered.size > MEM) {   // drop the frames farthest from the playhead
+      const far = [...rendered.keys()].sort((a, b) => Math.abs(b - st.frame) - Math.abs(a - st.frame)).slice(0, rendered.size - MEM);
+      for (const g of far) { rendered.get(g).then(URL.revokeObjectURL, () => {}); rendered.delete(g); ready.delete(g); }
+    }
+  }
+  return rendered.get(f);
+}
+let showToken = 0, settleTimer = null;
+// Scrubbing builds on the original live view: a rendered frame we already have (green, preloaded) shows at once;
+// any other frame shows the live scene, exactly as before the cache (it may be a little unfinished). When the
+// playhead rests (SETTLE ms), the rendered frame for that spot replaces the live one.
+function showFrame(f) {
+  const t = ++showToken;
+  clearTimeout(settleTimer);
+  if (ready.has(f)) { playImg.src = ready.get(f); playImg.hidden = false; syncLiveSoon(); }
+  else {
+    if (!playImg.hidden) playImg.hidden = true;
+    syncLive();                                                      // the live scene, as before: follows the playhead at once
+    if (cachedSet.has(f)) renderedFrame(f).catch(() => {});          // on disk already: fetch it for next time
+    else pingFocus();                                                // not rendered: tell the server to render here next
+  }
+  settleTimer = setTimeout(() => {                                   // rested: show the complete frame for this spot
+    renderedFrame(f).then((u) => { if (t === showToken && !st.playing) { playImg.src = u; playImg.hidden = false; } }, () => {});
+  }, SETTLE);
+  preload();
+}
+// tell the server where the playhead is (at most every 80 ms): its render queue re-sorts around it at once, and frames
+// queued for where you were are dropped once they fall out of its window
+let pingAt = 0;
+function pingFocus() {
+  const now = performance.now(); if (now - pingAt < 80) return; pingAt = now;
+  fetch(`/api/cached?${frameQuery()}`).then((r) => r.json()).then((r) => { cachedSet = new Set(r.frames); drawCacheBar(); }).catch(() => {});
+}
+// keep the rendered frames around the playhead in memory (only ones already on disk, a few at a time)
+let preloading = 0;
+function preload() {
+  const f0 = Math.round(st.frame);
+  for (let d = 0; d <= PRELOAD && preloading < 6; d++) for (const g of [f0 + d, f0 - d]) {
+    if (preloading >= 6 || g < 0 || g >= st.frames || rendered.has(g) || !cachedSet.has(g)) continue;
+    preloading++;
+    renderedFrame(g).catch(() => {}).finally(() => { preloading--; if (!st.playing) preload(); });
+  }
+}
+// the live scene underneath follows the playhead a moment later (it's only read for notes); syncLive() catches it up now
+let liveTimer = null;
+const syncLive = () => { clearTimeout(liveTimer); st.S?.seek(st.frame); };
+const syncLiveSoon = () => { clearTimeout(liveTimer); liveTimer = setTimeout(syncLive, 120); };
+
+// cache bar on the ruler (like After Effects): green = rendered and ready, dim = not yet
+let cachedSet = new Set();
+async function pollCache() {
+  if (st.S && st.scene && !document.hidden) {
+    try {
+      const r = await (await fetch(`/api/cached?${frameQuery()}`)).json();
+      cachedSet = new Set(r.frames); drawCacheBar(); if (!st.playing) preload();
+    } catch {}
+  }
+  setTimeout(pollCache, 400);
+}
+function drawCacheBar() {
+  const c = $('#cacheBar');
+  if (!c || !st.S) return;
+  const w = ruler.clientWidth, dpr = devicePixelRatio;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = 4 * dpr; }
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, 4);
+  const fEnd = Math.min(st.frames - 1, Math.ceil(v0 + visibleF()));
+  for (let f = Math.max(0, Math.floor(v0)); f <= fEnd; f++) {
+    g.fillStyle = cachedSet.has(f) ? '#3ecf6a' : 'rgba(255,255,255,.08)';
+    g.fillRect(xOf(f), 0, Math.max(1, ppf), 4);
+  }
+}
+pollCache();
 // wait for the frame to be painted; the timeout only matters when the tab is hidden (no paints happen there)
 const painted = () => Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 500))]);
 async function playLoop() {
@@ -126,6 +219,11 @@ async function playLoop() {
     const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
     let f = Math.floor(st.frame) + 1;
     if (f > b) { if (st.loop) f = a; else { setPlaying(false); break; } }
+    for (let k = 0; k < AHEAD; k++) { const g = f + k; if (g <= b) renderedFrame(g).catch(() => {}); }   // render ahead
+    let url;
+    try { url = await renderedFrame(f); } catch { if (!st.playing) break; await new Promise((r) => { playTimer = setTimeout(r, 200); }); continue; }
+    if (!st.playing) break;
+    playImg.src = url; playImg.hidden = false;
     seek(f);
     await painted();
     const wait = 1000 / st.fps - (performance.now() - t0);
@@ -140,7 +238,7 @@ function showRate() {
   const fps = (frameTimes.length - 1) / ((frameTimes.at(-1) - frameTimes[0]) / 1000);
   const slow = fps < st.fps - 1.5;
   el.hidden = !slow;
-  if (slow) el.textContent = `● ${fps.toFixed(0)} fps — slower than real time (${st.fps})`;
+  if (slow) el.textContent = `● ${fps.toFixed(0)} fps — waiting for complete frames (real time is ${st.fps})`;
 }
 
 function setRange(r) {
@@ -149,7 +247,7 @@ function setRange(r) {
   $('#rangeOut').textContent = st.range ? `${st.range[0]}–${st.range[1]} (${st.range[1] - st.range[0]}f)` : '';
   layoutRange();
 }
-function setLoop(on) { st.loop = on; $('#loopBtn').classList.toggle('on', on); }
+function setLoop(on) { st.loop = on; $('#loopItem').setAttribute('aria-checked', String(on)); }
 
 // ------------------------------------------------------------------ timeline (one row per note)
 // Timeline zoom: ppf = pixels per frame, v0 = first visible frame. By default the timeline shows
@@ -218,6 +316,7 @@ function layoutTimeline() {
   for (const lane of lanes.children) if (lane._note) placeBar(lane.querySelector('.nbar'), lane._note.range, lane._note.frame);
   placePlayhead();
   layoutRange();
+  drawCacheBar();
 }
 function placePlayhead() {
   const x = xOf(st.frame);
@@ -270,12 +369,18 @@ function stopRecording() {
   st.rec = null;
   $('#rec').classList.remove('on'); $('#rec').textContent = '● REC';
   const n = st.pending;
-  if (!n || n.range[1] - n.range[0] < 2) { st.pending = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); return; }
+  if (!n || !n.range || n.range[1] - n.range[0] < 2) { st.pending = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); return; }
   n.beats = st.beats.filter((b) => b.f1 >= n.range[0] && b.f0 <= n.range[1] && b.f1 > b.f0).map(({ name, f0, f1 }) => ({ name, f0, f1 }));
   st.focusText = false; renderPanel();
   const ta = $('#panel textarea'); ta?.focus({ preventScroll: true });   // type straight away
 }
-addEventListener('keydown', (e) => { if (e.key === 'Shift' && !e.repeat && !e.target.closest('input, textarea, select')) startRecording(); });
+// ⇧ alone records a span; with ⌘ / Ctrl / ⌥ it's part of a shortcut (e.g. ⌘⇧4 for a screenshot), so it never records,
+// and adding one of them while recording drops the half-started note
+const chord = (e) => e.metaKey || e.ctrlKey || e.altKey;
+addEventListener('keydown', (e) => {
+  if (chord(e)) { if (st.rec) { st.pending && (st.pending.range = null); stopRecording(); } return; }
+  if (e.key === 'Shift' && !e.repeat && !e.target.closest('input, textarea, select')) startRecording();
+});
 addEventListener('keyup', (e) => { if (e.key === 'Shift') stopRecording(); });
 addEventListener('blur', stopRecording);
 
@@ -416,6 +521,7 @@ function editBox(n) {
 }
 function retarget(n) {
   const fi = n.frame ?? Math.floor(st.frame);
+  syncLive();
   const hits = st.S.hitTest(n.region, n.range || [fi, fi]);
   const elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
   const beats = hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 }));
@@ -459,6 +565,7 @@ const typing = () => document.activeElement?.closest?.('#panel');
 
 function startNote({ region = null }) {
   const fi = Math.floor(st.frame), range = region && st.rangeAuto ? null : st.range;   // a spot never inherits a range the editor selected for you
+  syncLive();
   const hits = region ? st.S.hitTest(region, range || [fi, fi])
     : { beats: range ? st.beats.filter((b) => b.f1 >= range[0] && b.f0 <= range[1] && b.f1 > b.f0).map((b) => ({ name: b.name, f0: b.f0, f1: b.f1 })) : [], elements: [] };
   let elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
@@ -733,7 +840,7 @@ function renderPanel() {
 
 // cubic-bezier editor with a speed graph; y may leave 0..1 (anticipation / overshoot)
 function bezierEditor(points, onInput, onCommit) {
-  const W = 300, H = 210, pad = 20, Y0 = -0.6, Y1 = 1.6, SH = 54;
+  const W = 300, H = 210, pad = 20, Y0 = -0.6, Y1 = 1.6, SH = 54, SNAP = 4;   // SNAP: degrees from flat within which an arm snaps flat
   const p = [...points];
   const X = (x) => pad + x * (W - 2 * pad), Y = (y) => pad + ((Y1 - y) / (Y1 - Y0)) * (H - 2 * pad);
   const ix = (px) => (px - pad) / (W - 2 * pad), iy = (py) => Y1 - ((py - pad) / (H - 2 * pad)) * (Y1 - Y0);
@@ -760,9 +867,14 @@ function bezierEditor(points, onInput, onCommit) {
       const r = svg.getBoundingClientRect();
       p[i * 2] = r2(clamp(ix(((ev.clientX - r.left) / r.width) * W), 0, 1));
       p[i * 2 + 1] = r2(clamp(iy(((ev.clientY - r.top) / r.height) * (H + SH)), Y0, Y1));
+      // snap the arm flat (a true ease-in / ease-out) when it's within SNAP° of horizontal; hold ⌘ to move freely
+      const ay = i ? 1 : 0, dx = X(p[i * 2]) - X(i), dy = Y(p[i * 2 + 1]) - Y(ay);
+      const snapped = !ev.metaKey && Math.abs(dx) > 4 && Math.atan2(Math.abs(dy), Math.abs(dx)) * 180 / Math.PI < SNAP;
+      if (snapped) p[i * 2 + 1] = ay;
+      (i ? arm2 : arm1).classList.toggle('snap', snapped);
       draw(); onInput([...p]);
     };
-    const up = () => { c.removeEventListener('pointermove', move); c.removeEventListener('pointerup', up); onCommit([...p]); };
+    const up = () => { c.removeEventListener('pointermove', move); c.removeEventListener('pointerup', up); arm1.classList.remove('snap'); arm2.classList.remove('snap'); onCommit([...p]); };
     c.addEventListener('pointermove', move); c.addEventListener('pointerup', up);
   }));
   draw();
@@ -841,7 +953,16 @@ $('#tl').addEventListener('wheel', (e) => {
   const dx = e.shiftKey ? e.deltaY : e.deltaX;
   if (Math.abs(dx) > Math.abs(e.deltaY) || e.shiftKey) { e.preventDefault(); v0 += dx / ppf; clampView(); layoutTimeline(); }
 }, { passive: false });
-$('#loopBtn').onclick = () => setLoop(!st.loop);
+// the Motion Studio menu (the name, top left): loop, preview the scene on its own, theme library
+const brandBtn = $('#brandBtn'), brandMenu = $('#brandMenu');
+function setMenu(open) {
+  brandMenu.hidden = !open; brandBtn.setAttribute('aria-expanded', String(open));
+  if (open) { const r = brandBtn.getBoundingClientRect(); brandMenu.style.left = `${r.left}px`; brandMenu.style.top = `${r.bottom + 4}px`; brandMenu.firstElementChild.focus({ preventScroll: true }); }
+}
+brandBtn.onclick = (e) => { e.stopPropagation(); setMenu(brandMenu.hidden); };
+brandMenu.onclick = (e) => { if (e.target.closest('#loopItem')) setLoop(!st.loop); if (e.target.closest('button, a')) setMenu(false); };
+addEventListener('pointerdown', (e) => { if (!brandMenu.hidden && !e.target.closest('#brandMenu, #brandBtn')) setMenu(false); });
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && !brandMenu.hidden) { e.stopImmediatePropagation(); setMenu(false); brandBtn.focus(); } }, true);
 $('#commentBtn').onclick = () => setComment(!st.comment);
 addEventListener('copy', (e) => {
   const n = st.notes.find((x) => x.id === st.sel);

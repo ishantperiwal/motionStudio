@@ -29,7 +29,7 @@ npm run new-scene -- my-film   # scaffold scenes/my-film (import map, stage, sta
 ### Editor
 | Do | How |
 |---|---|
-| Play / step | Space · ←/→ (⌥ ×10) |
+| Play / step | Space · ←/→ (⌥ ×10). Playing shows frames rendered exactly as export does (never half-drawn). Scrubbing is instant: rendered frames near the playhead are preloaded in memory; elsewhere it shows the live scene, and swaps in the rendered frame once you rest for 0.15 s. The green bar under the ruler marks rendered frames (limits in `PREVIEW`, server/dev.mjs) |
 | Note a spot | ✎ Spot or **S**, then draw a tight box (or click) |
 | Note a span | Drag across the top timeline row, or hold **⇧** while scrubbing / stepping / playing |
 | Adjust a span | Drag a note bar's ends — the viewport shows the frame under the end you drag |

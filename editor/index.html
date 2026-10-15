@@ -7,11 +7,15 @@
 </head>
 <body>
 <header id="top">
-  <div class="brand">Motion Studio</div>
+  <button id="brandBtn" class="brand" aria-haspopup="menu" aria-expanded="false" title="Motion Studio menu"><span class="mark" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5.5 4.2v7.6a.6.6 0 0 0 .9.5l6-3.8a.6.6 0 0 0 0-1L6.4 3.7a.6.6 0 0 0-.9.5Z" fill="#fff"/></svg></span>Motion Studio<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  <div id="brandMenu" class="menu" role="menu" hidden>
+    <button id="loopItem" role="menuitemcheckbox" aria-checked="false" title="Loop the in/out range"><span class="chk">✓</span>Loop the video<kbd>L</kbd></button>
+    <a id="openScene" role="menuitem" target="_blank" title="Open the scene on its own"><span class="chk"></span>Preview in full screen<kbd>↗</kbd></a>
+    <a id="themesLink" role="menuitem" href="/themes/" target="_blank" title="Finished films to reference"><span class="chk"></span>Theme library<kbd>↗</kbd></a>
+  </div>
   <select id="scenePick" title="Scene"></select>
   <button id="playBtn" title="Play / pause (Space)">▶</button>
   <span id="fpsBadge" hidden title="Every frame is shown fully painted; the scene is too heavy to paint at full speed here, so playback is slower than real time. Export is unaffected."></span>
-  <div id="readout"><b id="frameNo">0</b><span id="frameTot">/ 0</span><span id="secs">0.00s</span></div>
   <div id="rangeOut" class="muted"></div>
   <div id="rec" title="Hold Shift while scrubbing to record a span note">● REC</div>
   <div class="spacer"></div>
@@ -21,15 +25,13 @@
     <button id="exportStop" hidden title="Stop the export">■ Stop</button>
   </div>
   <button id="sendBtn" class="send" title="Ask Claude to work the open notes now">▶ Send to Claude</button>
-  <button id="loopBtn" class="toggle" title="Loop the in/out range (L)">Loop</button>
-  <a id="themesLink" href="/themes/" target="_blank" title="Theme gallery: finished films to reference">Themes</a>
-  <a id="openScene" target="_blank" title="Open the scene on its own">↗</a>
 </header>
 
 <main>
   <section id="viewWrap">
     <div id="view">
       <iframe id="frame" title="scene"></iframe>
+      <img id="playImg" alt="" hidden>
       <div id="overlay"></div>
     </div>
     <div id="tools">
@@ -45,6 +47,7 @@
     <button id="zoomMinus">−</button><button id="zoomOut" title="Back to the default view">30s</button><button id="zoomIn">+</button><button id="zoomAll" title="Whole video">All</button>
   </div>
   <div id="ruler"></div>
+  <canvas id="cacheBar" title="Cache: green frames are rendered and ready"></canvas>
   <div id="lanes"></div>
   <div id="playhead"></div>
   <div id="rangeBox"></div>

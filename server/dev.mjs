@@ -7,6 +7,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 
+// Chrome for capturing frames. Its default GPU memory limit is too small for heavy 3D scenes: past it, Chrome quietly
+// skips drawing parts of a frame (layers come out blank) even in screenshots. A higher limit keeps every frame complete.
+export const CHROME = { channel: 'chrome', args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'] };
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -45,7 +48,7 @@ async function shot(base, note) {
   try {
     browserP ||= (async () => {
       const { chromium } = await import('playwright');
-      return chromium.launch({ channel: 'chrome' });
+      return chromium.launch(CHROME);
     })();
     const browser = await browserP;
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
@@ -53,7 +56,7 @@ async function shot(base, note) {
     await page.waitForFunction(() => window.animationReady === true, null, { timeout: 15000 });
     const { width, height } = await page.evaluate(() => ({ width: window.__studio.width, height: window.__studio.height }));
     await page.setViewportSize({ width, height });
-    await page.evaluate((f) => window.seek(f), note.frame);
+    await page.evaluate(async (f) => { window.seek(f); await window.__settle?.(); }, note.frame);
     const pad = 80, r = note.region;
     const clip = r ? {
       x: Math.max(0, r.x - pad), y: Math.max(0, r.y - pad),
@@ -63,6 +66,122 @@ async function shot(base, note) {
     await page.close();
   } catch (e) { console.warn('[notes] screenshot failed:', e.message); }
 }
+
+// ---- rendered frames: the editor shows these (playing, scrubbing, stepping) instead of the live scene, so a frame
+// is never half-drawn. Warm pages render them exactly like export (seek → paint → screenshot) and write JPEGs to
+// out/.preview. Hard limits, whatever the film's length:
+//   · only frames within PREVIEW.windowSec of the playhead are kept; ones that fall outside are deleted
+//   · all scenes together use at most PREVIEW.diskMB on disk (oldest deleted first); frames never sit in memory
+//   · the render pages close after PREVIEW.idleMin minutes without use
+export const PREVIEW = { pages: 3, windowSec: 20, diskMB: 300, idleMin: 5 };
+const PREVIEW_DIR = path.join(ROOT, 'out', '.preview');
+let sceneVersion = 0;   // bumped by the file watcher; stale frames are dropped on the next request
+const previews = {};    // `${scene}@${scale}` → { ver, scale, dir, pages, ready, queue, have: Map(f → bytes), inflight, focus, last, fps, frames }
+const disk = new Map(); // file → { bytes, t } across all scenes, for the disk cap
+let diskBytes = 0;
+const forget = (file) => { const e = disk.get(file); if (e) { diskBytes -= e.bytes; disk.delete(file); } fs.rm(file, { force: true }, () => {}); };
+
+function startPages(p, base, scene) {
+  browserP ||= (async () => {
+    const b = await (await import('playwright')).chromium.launch(CHROME);
+    b.on('disconnected', () => { browserP = null; for (const q of Object.values(previews)) { q.ready = null; q.pages = []; } });   // relaunched on next use
+    return b;
+  })();
+  p.pages = [];
+  p.ready = Promise.all(Array.from({ length: PREVIEW.pages }, async () => {   // set before any await, so concurrent requests share it
+    const page = await (await browserP).newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: p.scale });
+    await page.goto(`${base}/scenes/${scene}/?render`);
+    await page.waitForFunction(() => window.animationReady === true, null, { timeout: 30000 });
+    const m = await page.evaluate(() => ({ width: window.__studio.width, height: window.__studio.height, fps: window.__studio.fps, frames: window.__studio.frames }));
+    await page.setViewportSize({ width: m.width, height: m.height });
+    Object.assign(p, { fps: m.fps, frames: m.frames });
+    p.pages.push({ page, busy: false });
+  })).then(() => pumpPreview(p));
+  p.ready.catch((e) => { console.warn('[preview] render pages failed to start:', e.message); p.ready = null; browserP = null; });   // retried on the next request
+}
+async function previewPool(base, scene, scale, focus) {
+  const key = `${scene}@${scale}`;   // one pool per view size, so two editors at different sizes don't undo each other
+  let p = previews[key];
+  if (p && p.ver !== sceneVersion) { dropPool(p); p = null; }
+  if (!p) {
+    p = previews[key] = { ver: sceneVersion, scale, dir: path.join(PREVIEW_DIR, scene, `${sceneVersion}-${scale}`), queue: [], have: new Map(), inflight: new Map(), focus: 0 };
+    fs.mkdirSync(p.dir, { recursive: true });
+  }
+  p.last = Date.now();
+  if (Number.isFinite(focus)) p.focus = Math.round(focus);   // before the pages start, so the first frames rendered are around the playhead
+  if (!p.ready) startPages(p, base, scene);   // first use, or reopened after idling
+  await p.ready;
+  return p;
+}
+function dropPool(p) {
+  p.closed = true;
+  p.queue.splice(0).forEach((j) => j.bad(new Error('scene changed')));
+  p.ready?.then(() => p.pages.forEach((x) => x.page.close().catch(() => {})), () => {});
+  for (const f of p.have.keys()) forget(path.join(p.dir, `${f}.jpg`));
+  fs.rm(p.dir, { recursive: true, force: true }, () => {});
+}
+const windowF = (p) => Math.round(PREVIEW.windowSec * (p.fps || 25));
+const inWindow = (p, f) => Math.abs(f - p.focus) <= windowF(p);
+function previewFrame(p, f) {
+  const file = path.join(p.dir, `${f}.jpg`);
+  if (p.have.has(f)) { disk.get(file).t = Date.now(); return Promise.resolve(file); }
+  if (p.inflight.has(f)) return p.inflight.get(f);
+  const job = new Promise((ok, bad) => p.queue.push({ f, ok, bad }));
+  p.inflight.set(f, job);
+  pumpPreview(p);
+  return job;
+}
+// the next frame to render: a requested one nearest the playhead, else (idle) the nearest frame in the window not yet
+// rendered — so the window around the playhead fills in by itself, ahead of the playhead first
+function nextJob(p) {
+  p.queue = p.queue.filter((j) => inWindow(p, j.f) || (j.bad(new Error('outside the window')), p.inflight.delete(j.f), false));
+  if (p.queue.length) { p.queue.sort((a, b) => Math.abs(a.f - p.focus) - Math.abs(b.f - p.focus)); return p.queue.shift(); }
+  const W = windowF(p), last = (p.frames || 1) - 1;
+  for (let d = 0; d <= W; d++) for (const f of [p.focus + d, p.focus - d - 1]) {
+    if (f < 0 || f > last || p.have.has(f) || p.inflight.has(f)) continue;
+    const j = { f, ok: () => {}, bad: () => {} };
+    p.inflight.set(f, new Promise((ok, bad) => Object.assign(j, { ok, bad })).catch(() => {}));
+    return j;
+  }
+  return null;
+}
+function pumpPreview(p) {
+  for (const w of p.pages) {
+    if (w.busy || p.closed) continue;
+    const j = nextJob(p);
+    if (!j) return;
+    w.busy = true;
+    const file = path.join(p.dir, `${j.f}.jpg`);
+    (async () => {
+      await w.page.evaluate(async (f) => { window.seek(f); await window.__settle?.(); }, j.f);
+      await w.page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const buf = await w.page.screenshot({ type: 'jpeg', quality: 85 });   // a screenshot always waits for the frame to be fully drawn
+      if (p.closed) throw new Error('scene changed');
+      await fsp.mkdir(p.dir, { recursive: true });   // in case the folder was removed from outside
+      await fsp.writeFile(file, buf);
+      return buf.length;
+    })().then((bytes) => {
+      p.have.set(j.f, bytes); disk.set(file, { bytes, t: Date.now() }); diskBytes += bytes;
+      j.ok(file); trimPreview(p);
+    }, j.bad).finally(() => { p.inflight.delete(j.f); w.busy = false; pumpPreview(p); });
+  }
+}
+function trimPreview(p) {
+  for (const f of p.have.keys()) if (!inWindow(p, f)) { p.have.delete(f); forget(path.join(p.dir, `${f}.jpg`)); }
+  const cap = PREVIEW.diskMB * 1024 * 1024;
+  if (diskBytes <= cap) return;
+  for (const [file] of [...disk].sort((a, b) => a[1].t - b[1].t)) {   // oldest first, across all scenes
+    if (diskBytes <= cap) break;
+    for (const q of Object.values(previews)) { const f = +path.basename(file, '.jpg'); if (file.startsWith(q.dir + path.sep)) q.have.delete(f); }
+    forget(file);
+  }
+}
+setInterval(() => {   // idle render pages close; their frames stay on disk for when they're needed again
+  for (const [k, p] of Object.entries(previews)) if (p.ver !== sceneVersion && Date.now() - p.last > 10000) { dropPool(p); delete previews[k]; }   // stale and unused
+  for (const p of Object.values(previews)) if (p.ready && Date.now() - p.last > PREVIEW.idleMin * 60000) {
+    const pages = p.pages; p.ready.then(() => pages.forEach((x) => x.page.close().catch(() => {})), () => {}); p.ready = null; p.pages = [];
+  }
+}, 60000).unref();
 
 // themes/<id>/THEME.md (+ preview.mp4, poster.png, aspects.png): the gallery at /themes/ lists them
 function listThemes() {
@@ -114,6 +233,26 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         return;
       }
       if (p === '/api/scenes') return send(res, 200, await listScenes());
+      // one fully rendered frame (JPEG). scale: device pixels per stage pixel (the editor's view size); focus: the playhead
+      if (p === '/api/frame' || p === '/api/cached') {
+        const scene = safeId(url.searchParams.get('scene'));
+        if (!scene) return send(res, 400, { error: 'scene required' });
+        const scale = Math.min(1, Math.max(0.25, Math.round((+url.searchParams.get('scale') || 1) * 4) / 4));
+        const focus = url.searchParams.has('focus') ? +url.searchParams.get('focus') : NaN;
+        const pool = await previewPool(base, scene, scale, focus);
+        if (Number.isFinite(focus)) { trimPreview(pool); pumpPreview(pool); }
+        if (p === '/api/cached') return send(res, 200, { frames: [...pool.have.keys()], window: windowF(pool), total: pool.frames });   // for the cache bar
+        const f = Math.round(+url.searchParams.get('f'));
+        if (!Number.isFinite(f)) return send(res, 400, { error: 'f required' });
+        let jpg;
+        try { jpg = await fsp.readFile(await previewFrame(pool, f)); }
+        catch (e) {   // a cached file that has gone missing: forget it and render it again
+          if (e.code !== 'ENOENT') throw e;
+          pool.have.delete(f); forget(path.join(pool.dir, `${f}.jpg`));
+          jpg = await fsp.readFile(await previewFrame(pool, f));
+        }
+        return send(res, 200, jpg, 'image/jpeg');
+      }
       if (p === '/api/themes') return send(res, 200, listThemes());
 
       let m;
@@ -233,7 +372,15 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (!file) return send(res, 403, 'forbidden', 'text/plain');
       if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
       if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+      const type = MIME[path.extname(file)] || 'application/octet-stream', size = fs.statSync(file).size;
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      if (range) {   // byte ranges: a <video> needs them to seek
+        const start = range[1] ? +range[1] : Math.max(0, size - +range[2]), end = range[1] && range[2] ? Math.min(+range[2], size - 1) : size - 1;
+        if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+        res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1, 'Cache-Control': 'no-store' });
+        return fs.createReadStream(file, { start, end }).pipe(res);
+      }
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' });
       fs.createReadStream(file).pipe(res);
     } catch (e) {
       send(res, 500, { error: e.message });
@@ -248,6 +395,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       fs.watch(abs, { recursive: true }, (_, f) => {
         if (!f || /(^|\/)\.|~$/.test(f)) return;
         changed.add(`${dir}/${f}`);
+        if (dir !== 'notes' && dir !== 'editor') sceneVersion++;   // scene, runtime or tokens changed: playback frames are stale
         clearTimeout(timer);
         timer = setTimeout(() => { broadcast({ type: 'change', paths: [...changed] }); changed = new Set(); }, 60);
       });
@@ -260,4 +408,11 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
   }));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) startServer({ port: +(process.env.PORT || 5173) });
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  fs.rmSync(PREVIEW_DIR, { recursive: true, force: true });   // frames from an earlier run may not match the scene any more (only here: render.mjs imports this file too)
+  startServer({ port: +(process.env.PORT || 5173) });
+  // Playwright takes over SIGINT/SIGTERM to close its browsers but leaves the process running; make Ctrl+C (and a
+  // plain kill) stop the studio, closing the render browser first
+  const quit = async () => { try { await (await browserP)?.close(); } catch {} process.exit(0); };
+  process.once('SIGINT', quit); process.once('SIGTERM', quit);
+}

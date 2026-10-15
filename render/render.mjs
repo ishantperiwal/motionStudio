@@ -10,7 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
-import { startServer, ROOT } from '../server/dev.mjs';
+import { startServer, ROOT, CHROME } from '../server/dev.mjs';
 
 const argv = process.argv.slice(2);
 const scene = argv[0];
@@ -30,7 +30,7 @@ process.on('SIGTERM', () => { cleanTmp(); if (partialOut) fs.rmSync(partialOut, 
 
 const server = await startServer({ port: 0, watch: false, quiet: true });
 const base = `http://localhost:${server.address().port}`;
-const browser = await chromium.launch({ channel: 'chrome' });
+const browser = await chromium.launch(CHROME);
 
 async function openPage() {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: scale });
@@ -49,7 +49,7 @@ async function run(jobs) {
   await Promise.all(pages.map(async ({ page }) => {
     while (next < jobs.length) {
       const j = jobs[next++];
-      await page.evaluate((t) => window.seek(t), j.t);
+      await page.evaluate(async (t) => { window.seek(t); await window.__settle?.(); }, j.t);
       // let the compositor paint the new frame before capturing (otherwise heavy 3D frames can be grabbed half-drawn)
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       await page.screenshot({ path: j.file });

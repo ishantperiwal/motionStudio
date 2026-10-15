@@ -15,8 +15,13 @@
    cd motionStudio
    npm run dev
    ```
-2. Open **http://localhost:5173/editor/** and pick a scene at the top.
-3. Leave the terminal window open while you work. Stop it with `Ctrl+C`.
+2. Start the notes watcher, so **▶ Send to Claude** works: in a Claude Code session opened in this folder, say
+   > Start the notes watcher.
+
+   (Claude runs `node tools/wait-for-notes.mjs` in the background. If Claude is the one starting the studio,
+   it starts the watcher too, without being asked.) See [Working with Claude](#working-with-claude).
+3. Open **http://localhost:5173/editor/** and pick a scene at the top.
+4. Leave the terminal window open while you work. Stop it with `Ctrl+C`.
 
 ## Working with Claude
 The **▶ Send to Claude** button only works while a Claude session is running the *notes watcher*
@@ -37,7 +42,9 @@ Good to know:
   ```bash
   pgrep -fl wait-for-notes
   ```
-  No output means it's not running.
+  No output means it's not running. If you have more than one copy of the studio, make sure one is
+  running for *this* folder: `pgrep -fl wait-for-notes` lists every copy's watcher, and
+  `lsof -p <pid> | grep cwd` shows which folder a watcher belongs to.
 
 ## Export a video
 Press **⤓ Export MP4** in the editor. When it's done, press **Download**. Files are also saved in `out/`.

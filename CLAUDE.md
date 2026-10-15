@@ -58,9 +58,18 @@ those notes into precise scene changes and verify them in rendered frames.
    frame/range/region from the note) saying what changed and where to look, and tell the person in chat. They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
    with `followUp` set to the item's text (treat it as feedback on that change).
    If you could not do a note, leave it and put your question in `"reply"` instead.
+Whenever you start the studio (`npm run dev`), also start the watcher for this folder (see RUN-STUDIO.md).
 While a session is working notes, keep `node tools/wait-for-notes.mjs` running in the background: it exits
 when the editor's "Send to Claude" button is pressed — then work the notes and start it again.
 The dev server live-reloads the editor when scene files or notes change.
+
+## Animatics
+"Animatic" means a storyboard in motion: it shows the idea so it can be course-corrected before anything is
+made properly. Keep it to what tells the story:
+- Plain paper (`--stage-bg: #FAF8F2`), no background, grid, brand look or finished art; no real screenshots.
+- Everything drawn rough with the `sketch` kit; only the elements the story needs. Labels and placeholders are fine.
+- `shotHud` on top: each shot's title and one-line action.
+- Motion only for staging and timing (what enters, what happens, roughly when), not polish.
 
 ## Themes
 `themes/` holds finished films kept as references (gallery at `/themes/`). Read them only when asked; to
