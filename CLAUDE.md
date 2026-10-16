@@ -10,7 +10,7 @@ layouts first, then consistent easing, stagger, overlapping action and even timi
 
 ## Layout
 - `runtime/` — `studio.js` (master clock, beats, hit-testing), `ease.js` (bezier + tokens),
-  `kits/` (camera, cursor, typing, svg, sketch, lottie, construct, shine), `layers/` (pixi, three, p5). Shared by every scene.
+  `kits/` (camera, cursor, typing, svg, sketch, lottie, construct, shine, glass), `layers/` (pixi, three, p5). Shared by every scene.
 - `scenes/<id>/` — `index.html` (markup + import map), `scene.js` (beats), `style.css`, `assets/`.
   Start new ones with `npm run new-scene -- <id>`.
 
@@ -89,8 +89,9 @@ register a new one, follow `themes/REGISTERING.md`.
 ## Techniques
 `techniques/` holds reusable motion moves, each with a live demo and a kit (gallery at `/techniques/`). Read a
 technique's `TECHNIQUE.md` when asked for it, or when a scene calls for that move (an element built and then revealed →
-`construct-reveal`; light passing over a glossy card → `glossy-shine`), and use its kit rather than rebuilding the
-move. To register a new one, follow `techniques/REGISTERING.md`.
+`construct-reveal`; light passing over a glossy card → `glossy-shine`; a frosted glass panel that refracts what's
+behind it → `liquid-glass`), and use its kit rather than rebuilding the move. To register a new one, follow
+`techniques/REGISTERING.md`.
 
 ## Rendering
 `npm run render -- <scene>` → `out/<scene>.mp4`. Options: `--range a-b`, `--blur 8` (sub-frame motion

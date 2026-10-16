@@ -7,6 +7,7 @@
 //   npm run render -- techniques/x/demo ...         → a scene page in another folder (outputs named techniques-x-demo)
 //   options: --blur 8 (sub-frame motion blur) --shutter 0.5 --scale 2 --workers 12 --browsers 4 --out file.mp4 --crf 16
 //            --out file.webm encodes WebM (VP9) instead, --vp9crf 30 sets its quality
+//            --size 1600x900 makes the video exactly that size (use with --scale ≈ 1600/1920; frames are drawn at --scale)
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -107,6 +108,8 @@ try {
     await run(jobs);
     const out = opt('out', path.join(outDir, `${scene}.mp4`));
     const vf = blur > 1 ? [`tmix=frames=${blur}`, `select='eq(mod(n\\,${blur})\\,${blur - 1})'`, `setpts=N/${fps}/TB`] : [];
+    const size = opt('size', ''), sz = size.match(/^(\d+)x(\d+)$/);
+    vf.push(sz ? `scale=${sz[1]}:${sz[2]}:flags=lanczos` : 'scale=trunc(iw/2)*2:trunc(ih/2)*2');   // exact size, or at least even sides (H.264/VP9 need them)
     partialOut = path.resolve(ROOT, out);   // only from here on is the file ours to remove if stopped mid-encode
     const codec = out.endsWith('.webm')   // WebM: VP9 in constant-quality mode (its CRF scale differs from H.264's: ~30 here ≈ H.264 18)
       ? ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuv420p', '-crf', opt('vp9crf', '30'), '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2']

@@ -988,43 +988,68 @@ function bezierEditor(points, onInput, onCommit) {
 
 // ------------------------------------------------------------------ chrome
 $('#playBtn').onclick = () => setPlaying(!st.playing);
-// Export: pick a size (each with a rough file-size estimate), export, stop while it runs, then download
-const EXPORT_SCALES = [1, 0.75, 0.5, 0.25];
+// Export: pick a size on the slider (100 px steps of the width or the height, the other side following the aspect
+// ratio; each with a rough file-size estimate), export, stop while it runs, then download
 const EST_BPPF = 0.0067;   // bytes per pixel per frame, used until this scene has a real export to calibrate from
 let exportCalib = null;
 const WEBM_RATIO = 0.74;   // a WebM (VP9) is about this much of an MP4 (H.264) at the same quality (measured on this studio's films)
 const exportFmt = () => $('#exportFmt').value || 'mp4';
 const exportLabel = () => `⤓ Export ${exportFmt() === 'webm' ? 'WebM' : 'MP4'}`;
 const fmtSize = (b) => (b >= 1e6 ? `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
-function fillExportSizes() {
-  const sel = $('#exportSize');
-  let keep = sel.value; if (!keep) try { keep = localStorage.getItem('ms.exportScale'); } catch {}
-  sel.innerHTML = '';
-  EXPORT_SCALES.forEach((k) => {
-    const W = Math.round((st.w * k) / 2) * 2, H = Math.round((st.h * k) / 2) * 2, c = exportCalib;
-    // H.264 needs relatively more bits per pixel at small sizes, so size scales a little slower than pixel count
-    const mp4 = c ? (c.bytes / (c.fmt === 'webm' ? WEBM_RATIO : 1)) * (st.frames / c.frames) * Math.pow((W * H) / (c.w * c.h), 0.8) : EST_BPPF * W * H * st.frames;
-    const bytes = mp4 * (exportFmt() === 'webm' ? WEBM_RATIO : 1);
-    sel.append(h('option', { value: String(k) }, `${Math.round(k * 100)}% (${W}×${H}) · ~${fmtSize(bytes)}`));
+let exportAxis = 'w', exportKeep = null;   // which side steps by 100 px; the size to keep across reloads
+try { const k = JSON.parse(localStorage.getItem('ms.exportSize') || 'null'); if (k) { exportAxis = k.axis; exportKeep = k.side; } } catch {}
+// the sizes on the slider: every 100 px of the chosen side up to the full size (the full size itself last), at least 200 px
+function exportSteps() {
+  const full = exportAxis === 'w' ? st.w : st.h, sides = [];
+  for (let v = 200; v < full; v += 100) sides.push(v);
+  sides.push(full);
+  return sides.map((side) => {
+    const k = side / full, W = Math.round((st.w * k) / 2) * 2, H = Math.round((st.h * k) / 2) * 2;   // even sides (video needs them)
+    return { side, W, H, scale: W / st.w };
   });
-  if (keep && EXPORT_SCALES.includes(+keep)) sel.value = keep;
-  sel.title = exportCalib ? 'Export size. Estimates are scaled from this scene\'s last export.' : 'Export size. Estimates are rough until this scene has been exported once.';
 }
+const exportEstimate = ({ W, H }) => {   // H.264 needs relatively more bits per pixel at small sizes, so size scales a little slower than pixel count
+  const c = exportCalib, mp4 = c ? (c.bytes / (c.fmt === 'webm' ? WEBM_RATIO : 1)) * (st.frames / c.frames) * Math.pow((W * H) / (c.w * c.h), 0.8) : EST_BPPF * W * H * st.frames;
+  return mp4 * (exportFmt() === 'webm' ? WEBM_RATIO : 1);
+};
+const exportPick = () => exportSteps()[+$('#exportSlider').value] || exportSteps().at(-1);
+function showExportSize() {
+  const p = exportPick();
+  $('#exportSizeLbl').textContent = `${p.W}×${p.H} · ~${fmtSize(exportEstimate(p))}`;
+  $('#exportSize').title = `Export size: ${Math.round(p.scale * 100)}% of ${st.w}×${st.h}. ` + (exportCalib ? 'The estimate is scaled from this scene\'s last export.' : 'The estimate is rough until this scene has been exported once.');
+}
+function fillExportSizes() {
+  const steps = exportSteps(), sl = $('#exportSlider');
+  sl.max = String(steps.length - 1);
+  const i = exportKeep ? steps.findIndex((p) => p.side === exportKeep) : -1;
+  sl.value = String(i >= 0 ? i : steps.length - 1);
+  $('#exportAxis').textContent = exportAxis.toUpperCase();
+  showExportSize();
+}
+const keepExportSize = () => { exportKeep = exportPick().side; try { localStorage.setItem('ms.exportSize', JSON.stringify({ axis: exportAxis, side: exportKeep })); } catch {} };
+// a finished export offers its download until you take it or change what you'd export (size, side, format): then the
+// button goes back to Export (the file stays in out/)
+function resetExportBtn() { clearTimeout(exportTimer); const b = $('#exportBtn'); delete b.dataset.file; b.classList.remove('on'); b.textContent = exportLabel(); }
+$('#exportSlider').oninput = () => { showExportSize(); keepExportSize(); resetExportBtn(); };
+$('#exportAxis').onclick = () => {   // switch the stepping side, staying as close as possible to the current size
+  const W = exportPick().W; exportAxis = exportAxis === 'w' ? 'h' : 'w';
+  const steps = exportSteps(), i = steps.reduce((b, p, j) => (Math.abs(p.W - W) < Math.abs(steps[b].W - W) ? j : b), 0);
+  exportKeep = steps[i].side; fillExportSizes(); keepExportSize(); resetExportBtn();
+};
 async function loadExportSizes() {
   try { exportCalib = (await (await fetch(`/api/export?scene=${st.scene}&calib`)).json()).calib; } catch { exportCalib = null; }
   fillExportSizes();
   try { const j = await (await fetch(`/api/export?scene=${st.scene}`)).json(); if (j.state === 'running' || j.state === 'stopping') pollExport(); } catch {}   // pick a running export back up after a reload
 }
-$('#exportSize').onchange = () => { try { localStorage.setItem('ms.exportScale', $('#exportSize').value); } catch {} };
 try { const f = localStorage.getItem('ms.exportFmt'); if (f) $('#exportFmt').value = f; } catch {}
 $('#exportBtn').textContent = exportLabel();
 $('#exportFmt').onchange = () => {
   try { localStorage.setItem('ms.exportFmt', exportFmt()); } catch {}
-  fillExportSizes(); const b = $('#exportBtn'); if (!b.dataset.file) b.textContent = exportLabel();
+  fillExportSizes(); resetExportBtn();
 };
 let exportTimer = null;
 function exportUi(running) {
-  $('#exportBtn').disabled = running; $('#exportSize').disabled = running; $('#exportFmt').disabled = running; $('#exportStop').hidden = !running;
+  $('#exportBtn').disabled = running; $('#exportSlider').disabled = running; $('#exportAxis').disabled = running; $('#exportFmt').disabled = running; $('#exportStop').hidden = !running;
 }
 async function pollExport() {
   clearTimeout(exportTimer);
@@ -1045,9 +1070,10 @@ async function pollExport() {
 }
 $('#exportBtn').onclick = async () => {
   const b = $('#exportBtn');
-  if (b.dataset.file) { const a = h('a', { href: '/' + b.dataset.file, download: '' }); document.body.append(a); a.click(); a.remove(); return; }
+  if (b.dataset.file) { const a = h('a', { href: '/' + b.dataset.file, download: '' }); document.body.append(a); a.click(); a.remove(); resetExportBtn(); return; }   // downloaded: back to Export
   delete b.dataset.file; b.classList.remove('on');
-  await fetch(`/api/export?scene=${st.scene}&scale=${$('#exportSize').value || 1}&fmt=${exportFmt()}`, { method: 'POST' });
+  const p = exportPick();
+  await fetch(`/api/export?scene=${st.scene}&scale=${p.scale}&w=${p.W}&h=${p.H}&fmt=${exportFmt()}`, { method: 'POST' });
   pollExport();
 };
 $('#exportStop').onclick = async () => { $('#exportStop').disabled = true; await fetch(`/api/export?scene=${st.scene}`, { method: 'DELETE' }); $('#exportStop').disabled = false; pollExport(); };

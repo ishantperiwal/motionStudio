@@ -22,7 +22,11 @@
   <div id="rec" title="Hold Shift while scrubbing to record a span note">● REC</div>
   <div class="spacer"></div>
   <div id="exportGroup">
-    <select id="exportSize" title="Export size"></select>
+    <div id="exportSize" title="Export size">
+      <button id="exportAxis" title="Step the size by width (W) or by height (H), 100 px at a time">W</button>
+      <input type="range" id="exportSlider" min="0" max="0" step="1">
+      <span id="exportSizeLbl"></span>
+    </div>
     <select id="exportFmt" title="Export format: MP4 (H.264) plays everywhere; WebM (VP9) is ~25% smaller for the same quality, for the web"><option value="mp4">MP4</option><option value="webm">WebM</option></select>
     <button id="exportBtn" title="Export: motion blur, high quality, at the size and format picked on the left">⤓ Export MP4</button>
     <button id="exportStop" hidden title="Stop the export">■ Stop</button>

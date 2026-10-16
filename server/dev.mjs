@@ -214,7 +214,7 @@ const calibCache = {};
 function exportCalib(scene) {
   const dir = path.join(ROOT, 'out');
   let files = [];
-  try { files = fs.readdirSync(dir).filter((f) => new RegExp(`^${scene}-\\d+(-\\d+pct)?\\.(mp4|webm)$`).test(f)); } catch { return null; }
+  try { files = fs.readdirSync(dir).filter((f) => new RegExp(`^${scene}-\\d+(-(\\d+pct|\\d+x\\d+))?\\.(mp4|webm)$`).test(f)); } catch { return null; }
   const latest = files.map((f) => ({ f, st: fs.statSync(path.join(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs)[0];
   if (!latest) return null;
   const key = `${latest.f}:${latest.st.mtimeMs}`;
@@ -299,10 +299,12 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
           const scale = Math.min(1, Math.max(0.1, +url.searchParams.get('scale') || 1));   // 1 = full size, 0.5 = half, …
           const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
           const ext = url.searchParams.get('fmt') === 'webm' ? 'webm' : 'mp4';   // WebM: VP9, ~25% smaller, for the web
-          const file = `out/${scene}-${stamp}${scale < 1 ? `-${Math.round(scale * 100)}pct` : ''}.${ext}`;
+          const even = (v) => Math.max(2, Math.round(v / 2) * 2), w = even(+url.searchParams.get('w') || 0), h = even(+url.searchParams.get('h') || 0);   // the exact size picked (even sides)
+          const size = url.searchParams.get('w') && url.searchParams.get('h') ? `${w}x${h}` : '';
+          const file = `out/${scene}-${stamp}${scale < 1 ? `-${size || `${Math.round(scale * 100)}pct`}` : ''}.${ext}`;
           const j = exports_[scene] = { state: 'running', done: 0, total: 0, file, scale, started: Date.now() };
           // its own process group, so Stop can end the renderer together with its browsers and ffmpeg
-          const child = spawn(process.execPath, ['render/render.mjs', scene, '--blur', '6', '--crf', '18', '--scale', String(scale), '--out', file], { cwd: ROOT, detached: true });
+          const child = spawn(process.execPath, ['render/render.mjs', scene, '--blur', '6', '--crf', '18', '--scale', String(scale), ...(size && scale < 1 ? ['--size', size] : []), '--out', file], { cwd: ROOT, detached: true });
           exportProcs[scene] = child;
           const onData = (d) => { const m = String(d).match(/(\d+)\/(\d+)(?!.*\d+\/\d+)/s); if (m) { j.done = +m[1]; j.total = +m[2]; } };
           child.stdout.on('data', onData); child.stderr.on('data', (d) => { j.log = String(d).slice(-400); });

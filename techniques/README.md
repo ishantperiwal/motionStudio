@@ -20,3 +20,4 @@ To add one, see [REGISTERING.md](REGISTERING.md).
 |---|---|---|---|
 | [Construct reveal](construct-reveal/TECHNIQUE.md) | A UI element is built on a dot lattice part by part, then a scan bar reveals the real thing | `runtime/kits/construct.js` | Motion Ops film (the card and the plugin panel) |
 | [Glossy shine](glossy-shine/TECHNIQUE.md) | Light passes over a glossy printed card: the print and frame catch it, a printed sparkle twinkles as it crosses | `runtime/kits/shine.js` | Motion Ops film (the back of the hero card) |
+| [Liquid glass](liquid-glass/TECHNIQUE.md) | A frosted glass slab (WebGL shader) that refracts what's behind it: the rim bends and magnifies the backdrop with colour fringes and catches the light | `runtime/kits/glass.js` | Motion Ops film (the glass panel over the names) |

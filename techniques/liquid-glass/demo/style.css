@@ -1,0 +1,2 @@
+@font-face { font-family: 'InterLocal'; font-weight: 900; font-style: normal; src: url('/vendor/@fontsource/inter/files/inter-latin-900-normal.woff2') format('woff2'); }
+#stage { --stage-bg: #BCD9D2; width: 1920px; height: 1080px; }
