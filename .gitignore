@@ -2,8 +2,8 @@ node_modules/
 out/
 .DS_Store
 # per-machine working data
-notes/*/*.json
-notes/*/*.png
+# each scene's notes, their crops and pasted reference images (any format), and its To-check list
+notes/*/
 notes/_go.json
 !notes/.gitkeep
 
