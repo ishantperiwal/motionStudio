@@ -4,7 +4,9 @@
 //   npm run render -- my-film --frames 0,100,200    → PNGs in out/my-film-frames/
 //   npm run render -- my-film --range 150-200 --png out/x
 //   npm run render -- my-film --sheet 0-250:10      → out/my-film-sheet-*.png (5x4 tiles)
-//   options: --blur 8 (sub-frame motion blur) --shutter 0.5 --scale 2 --workers 4 --out file.mp4 --crf 16
+//   npm run render -- techniques/x/demo ...         → a scene page in another folder (outputs named techniques-x-demo)
+//   options: --blur 8 (sub-frame motion blur) --shutter 0.5 --scale 2 --workers 12 --browsers 4 --out file.mp4 --crf 16
+//            --out file.webm encodes WebM (VP9) instead, --vp9crf 30 sets its quality
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -13,11 +15,16 @@ import { chromium } from 'playwright';
 import { startServer, ROOT, CHROME } from '../server/dev.mjs';
 
 const argv = process.argv.slice(2);
-const scene = argv[0];
 const opt = (k, d) => { const i = argv.indexOf('--' + k); return i < 0 ? d : argv[i + 1]; };
-if (!scene || scene.startsWith('--')) { console.log('usage: npm run render -- <scene> [--frames a,b | --range a-b | --sheet a-b:step] [--png dir] [--out file.mp4] [--blur N] [--scale 2] [--workers 4]'); process.exit(1); }
+if (!argv[0] || argv[0].startsWith('--')) { console.log('usage: npm run render -- <scene | folder/with/scene> [--frames a,b | --range a-b | --sheet a-b:step] [--png dir] [--out file.mp4] [--blur N] [--scale 2] [--workers 12] [--browsers 4]'); process.exit(1); }
+// a scene id (scenes/<id>/), or a path to any folder holding a scene page, e.g. a technique's demo
+const dirArg = argv[0].replace(/^\/+|\/+$/g, ''), pageUrl = dirArg.includes('/') ? `/${dirArg}/` : `/scenes/${dirArg}/`, scene = dirArg.replace(/\//g, '-');
 
-const workers = +opt('workers', Math.max(1, Math.min(6, os.cpus().length - 2)));
+// Speed: a frame takes ~35 ms to seek and draw but ~375 ms to save as an ordinary PNG, and one browser saves its pages'
+// screenshots one at a time. So frames are captured with Chrome's fast PNG mode (still lossless, ~4× quicker), and the
+// workers (pages) are spread over several browsers so the captures run side by side (~13× overall on a 15-core Mac).
+const workers = +opt('workers', Math.max(1, Math.min(16, os.cpus().length - 3)));
+const browserCount = Math.max(1, Math.min(workers, +opt('browsers', Math.min(4, Math.ceil(workers / 3)))));
 const blur = +opt('blur', 1), shutter = +opt('shutter', 0.5), scale = +opt('scale', 1);
 const outDir = path.join(ROOT, 'out');
 fs.mkdirSync(outDir, { recursive: true });
@@ -30,29 +37,33 @@ process.on('SIGTERM', () => { cleanTmp(); if (partialOut) fs.rmSync(partialOut, 
 
 const server = await startServer({ port: 0, watch: false, quiet: true });
 const base = `http://localhost:${server.address().port}`;
-const browser = await chromium.launch(CHROME);
+const browsers = await Promise.all(Array.from({ length: browserCount }, () => chromium.launch(CHROME)));
+let opened = 0;
 
 async function openPage() {
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: scale });
+  const page = await browsers[opened++ % browsers.length].newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: scale });
+  const cdp = await page.context().newCDPSession(page);
   page.on('pageerror', (e) => console.error('[scene error]', e.message));
-  await page.goto(`${base}/scenes/${scene}/?render`);
+  await page.goto(`${base}${pageUrl}?render`);
   await page.waitForFunction(() => window.animationReady === true, null, { timeout: 30000 });
   const meta = await page.evaluate(() => ({ w: window.__studio.width, h: window.__studio.height, fps: window.__studio.fps, frames: window.__studio.frames }));
   await page.setViewportSize({ width: meta.w, height: meta.h });
-  return { page, meta };
+  return { page, cdp, meta };
 }
 
 // jobs: [{ t: frame time (may be fractional), file }]
 async function run(jobs) {
   const pages = await Promise.all(Array.from({ length: Math.min(workers, jobs.length) }, openPage));
   let next = 0, done = 0;
-  await Promise.all(pages.map(async ({ page }) => {
+  await Promise.all(pages.map(async ({ page, cdp, meta }) => {
+    const clip = { x: 0, y: 0, width: meta.w, height: meta.h, scale };   // the stage at --scale (this session doesn't see Playwright's pixel-ratio emulation, so the scale goes here)
     while (next < jobs.length) {
       const j = jobs[next++];
       await page.evaluate(async (t) => { window.seek(t); await window.__settle?.(); }, j.t);
       // let the compositor paint the new frame before capturing (otherwise heavy 3D frames can be grabbed half-drawn)
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-      await page.screenshot({ path: j.file });
+      const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, clip, captureBeyondViewport: false });   // lossless, just lighter compression
+      await fs.promises.writeFile(j.file, Buffer.from(data, 'base64'));
       if (++done % 10 === 0) process.stdout.write(`\r${done}/${jobs.length}`);
     }
   }));
@@ -97,13 +108,15 @@ try {
     const out = opt('out', path.join(outDir, `${scene}.mp4`));
     const vf = blur > 1 ? [`tmix=frames=${blur}`, `select='eq(mod(n\\,${blur})\\,${blur - 1})'`, `setpts=N/${fps}/TB`] : [];
     partialOut = path.resolve(ROOT, out);   // only from here on is the file ours to remove if stopped mid-encode
-    ffmpeg(['-framerate', String(fps * blur), '-i', path.join(tmp, '%06d.png'), ...(vf.length ? ['-vf', vf.join(',')] : []),
-      '-r', String(fps), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', opt('crf', '16'), '-preset', 'slow', '-movflags', '+faststart', out]);
+    const codec = out.endsWith('.webm')   // WebM: VP9 in constant-quality mode (its CRF scale differs from H.264's: ~30 here ≈ H.264 18)
+      ? ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuv420p', '-crf', opt('vp9crf', '30'), '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2']
+      : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', opt('crf', '16'), '-preset', 'slow', '-movflags', '+faststart'];
+    ffmpeg(['-framerate', String(fps * blur), '-i', path.join(tmp, '%06d.png'), ...(vf.length ? ['-vf', vf.join(',')] : []), '-r', String(fps), ...codec, out]);
     fs.rmSync(tmp, { recursive: true, force: true });
     console.log(`→ ${out}`);
   }
 } finally {
   cleanTmp();
-  await browser.close();
+  await Promise.all(browsers.map((b) => b.close()));
   server.close();
 }

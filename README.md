@@ -51,6 +51,10 @@ npm run probe -- my-film "<data-name>" --range 120-180   # speed curve + rough-s
 ```
 
 ## Writing a scene
+Every scene follows the motion-design principles in [`skills/motion-principles/SKILL.md`](skills/motion-principles/SKILL.md)
+(key frames as composed layouts, consistent easing, stagger, overlapping action, timing). Point your AI agent at it,
+or read it yourself.
+
 ```js
 import { gsap } from 'gsap';
 import { studio } from '@studio/studio.js';
@@ -67,7 +71,13 @@ everything animates through beats (no `gsap.to`, no timers, no `Math.random` —
 
 Kits (`runtime/kits/`): `camera` (focus + zoom views), `cursor` (collaborator cursor, clicks,
 proportional tilt, optional name tag), `typer` (uneven seeded typing), `loadSvg` (Affinity SVGs),
-`sketch` / `shotHud` (animatics). Layers: `pixiLayer`, `threeLayer`, `p5Layer`. Lottie: `lottieKit`. Tokens: `tokens/motion.json`.
+`sketch` / `shotHud` (animatics), `construct` (an element built on a dot lattice, then revealed by a scan), `shine` (light passing over a glossy printed card). Layers: `pixiLayer`,
+`threeLayer`, `p5Layer`. Lottie: `lottieKit`. Tokens: `tokens/motion.json`.
+
+## Themes and techniques
+[`themes/`](themes/README.md) keeps finished films as references (gallery at `/themes/`). [`techniques/`](techniques/README.md)
+keeps single reusable moves, each with a live demo and a kit you import (gallery at `/techniques/`; both are in the
+editor's Motion Studio menu). So far: the construct reveal (`runtime/kits/construct.js`) and the glossy shine (`runtime/kits/shine.js`).
 
 ## Scenes
 None ship with the studio. Create one with `npm run new-scene -- my-film`; each scene lives in

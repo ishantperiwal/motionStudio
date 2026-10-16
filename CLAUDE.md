@@ -4,12 +4,20 @@ Motion Studio makes motion videos from code. A person scrubs a scene in the edit
 pinned to a frame or a span (optionally a region, and an easing curve showing what they want). Your job is to turn
 those notes into precise scene changes and verify them in rendered frames.
 
+**Motion principles apply by default.** Before planning, building or retiming any scene (animatics excepted: there,
+only staging and timing matter), read `skills/motion-principles/SKILL.md` and follow it: key frames are composed
+layouts first, then consistent easing, stagger, overlapping action and even timing between them.
+
 ## Layout
 - `runtime/` — `studio.js` (master clock, beats, hit-testing), `ease.js` (bezier + tokens),
-  `kits/` (camera, cursor, typing, svg, sketch, lottie), `layers/` (pixi, three, p5). Shared by every scene.
+  `kits/` (camera, cursor, typing, svg, sketch, lottie, construct, shine), `layers/` (pixi, three, p5). Shared by every scene.
 - `scenes/<id>/` — `index.html` (markup + import map), `scene.js` (beats), `style.css`, `assets/`.
   Start new ones with `npm run new-scene -- <id>`.
 
+- `skills/` — skills that ship with Motion Studio (plain Markdown, tool-agnostic): `motion-principles/` is the
+  motion-design ruleset every scene follows.
+- `themes/<id>/` — finished films kept as references. `techniques/<id>/` — reusable motion moves, each a `TECHNIQUE.md`,
+  a live `demo/` scene and a kit in `runtime/kits/` (e.g. `construct-reveal` → `construct.js`).
 - `tokens/motion.json` — named eases and durations (`move`, `settle`, `overshoot`, …).
 - `notes/<scene>/<id>.json` (+ `<id>.png` crop) — feedback queue.
 - `render/render.mjs`, `render/probe.mjs` — rendering and motion analysis.
@@ -31,6 +39,9 @@ those notes into precise scene changes and verify them in rendered frames.
 - Fonts: Inter and Manrope ship as defaults (`/vendor/@fontsource/inter|manrope/files/*.woff2`, via `@font-face`);
   any other font is fine — `npm install @fontsource/<name>` or local files in the scene. Await `document.fonts.load(...)`
   before `s.ready()` so renders never capture the fallback font.
+- Video in a scene: use WebM (VP9), not MP4/H.264. Frames are rendered by Playwright's own Chromium (`npx playwright
+  install chromium`), which can't decode H.264; it never uses the user's Chrome app (a hidden instance of it stops their
+  Chrome from opening on macOS).
 - SVGs from Affinity: `loadSvg()`; Affinity layer names become `data-name`, pivots default to the
   artwork centre. Keep exports flat (no effects).
 
@@ -75,6 +86,14 @@ made properly. Keep it to what tells the story:
 `themes/` holds finished films kept as references (gallery at `/themes/`). Read them only when asked; to
 register a new one, follow `themes/REGISTERING.md`.
 
+## Techniques
+`techniques/` holds reusable motion moves, each with a live demo and a kit (gallery at `/techniques/`). Read a
+technique's `TECHNIQUE.md` when asked for it, or when a scene calls for that move (an element built and then revealed →
+`construct-reveal`; light passing over a glossy card → `glossy-shine`), and use its kit rather than rebuilding the
+move. To register a new one, follow `techniques/REGISTERING.md`.
+
 ## Rendering
 `npm run render -- <scene>` → `out/<scene>.mp4`. Options: `--range a-b`, `--blur 8` (sub-frame motion
-blur), `--shutter 0.5`, `--scale 2` (supersampled), `--workers N`, `--crf 16`.
+blur), `--shutter 0.5`, `--scale 2` (supersampled), `--workers N`, `--crf 16`. `--out file.webm` encodes WebM (VP9, ~25% smaller;
+`--vp9crf 30`); the editor's Export has an MP4 / WebM picker. A folder path in place of the scene id
+renders a scene page kept elsewhere (`npm run render -- techniques/<id>/demo …`).

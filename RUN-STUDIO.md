@@ -33,6 +33,10 @@ The **▶ Send to Claude** button only works while a Claude session is running t
 3. Press **▶ Send to Claude**. Claude works the notes, checks the result in rendered frames, and lists
    what changed under **To check**. It then starts the watcher again for your next round.
 
+Claude follows the motion-design principles in [skills/motion-principles/SKILL.md](skills/motion-principles/SKILL.md)
+by default (it's referenced from `CLAUDE.md`). They're defaults: tell Claude to skip any of them for a shot, a scene or
+the session, and it will.
+
 Good to know:
 - **Watcher not running?** Pressing the button still saves your notes and the request waits. Nothing
   happens until a watcher starts; then Claude picks the notes up straight away. Nothing is lost.

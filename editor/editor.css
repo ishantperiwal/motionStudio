@@ -86,7 +86,6 @@ button.ghost { background: transparent; border-style: dashed; color: var(--muted
 .bz .arm { stroke: #6b7080; stroke-width: 1.2; }
 .bz .arm.snap { stroke: #3ecf6a; stroke-width: 1.6; }   /* snapped flat */
 .bz .h { fill: #fff; stroke: var(--accent); stroke-width: 2; cursor: grab; }
-.bz .speed { fill: rgba(76, 141, 255, .18); stroke: var(--accent); stroke-width: 1.2; }
 .bz text { fill: var(--muted); font-size: 10px; }
 
 /* timeline */
@@ -202,3 +201,5 @@ button.ghost { background: transparent; border-style: dashed; color: var(--muted
 
 /* a span note's area, selected on its own (⌫ removes only the area) */
 .region.edit.picked { border-style: solid; box-shadow: 0 0 0 3px rgba(242, 113, 28, .35); }
+
+#sceneBadge { margin-left: 8px; padding: 3px 9px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: #a9a9b3; font-size: 12px; font-weight: 600; white-space: nowrap; }

@@ -11,7 +11,9 @@
   header { display: flex; align-items: baseline; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); }
   header h1 { margin: 0; font-size: 17px; font-weight: 650; }
   header span { color: var(--muted); }
-  header a { margin-left: auto; color: var(--muted); text-decoration: none; }
+  header nav { margin-left: auto; display: flex; gap: 18px; }
+  header a { color: var(--muted); text-decoration: none; }
+  header a:hover { color: var(--text); }
   main { padding: 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
   .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; transition: border-color .15s; }
   .tile:hover { border-color: #3a404b; }
@@ -37,7 +39,7 @@
 </style>
 </head>
 <body>
-<header><h1>Themes</h1><span>Hover to play · click for the full preview and notes</span><a href="/editor/">← Editor</a></header>
+<header><h1>Themes</h1><span>Hover to play · click for the full preview and notes</span><nav><a href="/techniques/">Techniques</a><a href="/editor/">← Editor</a></nav></header>
 <main id="grid"></main>
 <div id="detail"><button class="close" title="Close (Esc)">✕</button><div class="wrap"><div id="dMedia"></div><pre id="dDoc"></pre></div></div>
 <script>

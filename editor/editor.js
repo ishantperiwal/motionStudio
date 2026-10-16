@@ -1,6 +1,5 @@
 // Motion Studio editor: scrub a scene and leave notes pinned to a frame or a span.
 // The timeline lists the notes; the right panel shows only the note you're on.
-import { bezier } from '/runtime/ease.js';
 
 const $ = (q, r = document) => r.querySelector(q);
 function h(tag, attrs = {}, ...kids) {
@@ -21,7 +20,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const r2 = (v) => Math.round(v * 100) / 100;
 const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-const frameEl = $('#frame'), playImg = $('#playImg'), view = $('#view'), overlay = $('#overlay'), panel = $('#panel');
+let frameEl = $('#frame'); const playImg = $('#playImg'), view = $('#view'), overlay = $('#overlay'), panel = $('#panel');
 const ruler = $('#ruler'), lanes = $('#lanes'), playhead = $('#playhead'), rangeBox = $('#rangeBox');
 const LABEL_W = 200;
 
@@ -30,6 +29,30 @@ const st = {
   frame: 0, playing: false, loop: false, range: null, comment: false,
   notes: [], pending: null, sel: null, curveOpen: false, checklist: [],
 };
+
+// Scrub log (diagnostics): what happened around each drag on the ruler, sent to the dev server when the drag ends
+// (out/.diag/scrub.log), so a scrub that misbehaves in your own browser can be read back exactly.
+const dlogEv = [];
+function dlog(type, x) {
+  const t = Math.round(performance.now()), last = dlogEv[dlogEv.length - 1];
+  if (type === 'move' && last?.type === 'move' && last.buttons === x?.buttons) { last.n++; last.t1 = t; return; }   // runs of moves: one entry
+  dlogEv.push({ t, type, ...x, ...(type === 'move' ? { n: 1 } : {}) }); if (dlogEv.length > 400) dlogEv.splice(0, 100);
+}
+function dflush(why) {
+  const body = JSON.stringify({ why, at: new Date().toISOString(), ua: navigator.userAgent, hidden: document.hidden, focus: document.hasFocus(),
+    S: !!st.S, frame: Math.round(st.frame), live: liveFrame(), playImg: !playImg.hidden, k: st.k, dpr: devicePixelRatio, ev: dlogEv.splice(0) });
+  fetch('/api/diag', { method: 'POST', body, keepalive: true }).catch(() => {});
+}
+const describe = (el) => el ? `${el.tagName?.toLowerCase()}${el.id ? '#' + el.id : ''}${typeof el.className === 'string' && el.className ? '.' + el.className.trim().split(/\s+/).join('.') : ''}` : null;
+const liveFrame = () => { try { return st.S?.frame(); } catch { return 'dead'; } };
+addEventListener('focus', () => dlog('win-focus', { dragging }));
+addEventListener('blur', () => dlog('win-blur', { dragging }));
+for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) addEventListener(t, (e) => { if (dragging || ruler.contains(e.target)) dlog(t, { buttons: e.buttons, on: describe(e.target) }); }, true);
+addEventListener('pointerdown', (e) => {   // a press over the ruler that the ruler doesn't get: something covers it
+  const r = ruler.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom || ruler.contains(e.target)) return;
+  dlog('ruler-covered', { by: document.elementsFromPoint(e.clientX, e.clientY).slice(0, 4).map(describe) }); dflush('covered');
+}, true);
 
 // ------------------------------------------------------------------ scene
 async function init() {
@@ -47,12 +70,33 @@ async function init() {
     const { paths = [] } = JSON.parse(e.data);
     if (paths.some((p) => p.startsWith('editor/'))) return location.reload();
     if (!st.scene && paths.some((p) => p.startsWith('scenes/'))) return location.reload();   // first scene created
-    if (paths.some((p) => p.startsWith(`scenes/${st.scene}/`) || p.startsWith('runtime/') || p.startsWith('tokens/'))) loadScene();
+    if (paths.some((p) => p.startsWith(`scenes/${st.scene}/`) || p.startsWith('runtime/') || p.startsWith('tokens/'))) reloadScene();
     if (paths.some((p) => p.startsWith(`notes/${st.scene}/`))) loadNotes();
   };
 }
 
+// A scene edit reloads the scene without interrupting you: the new version loads in a hidden iframe while the current
+// one keeps scrubbing, and they swap once it's ready. If it fails to load (a broken edit), you keep the last good
+// version and a badge says so. In a hidden tab the reload waits until you come back (background tabs are throttled).
+let staging = null, stagingTimer = null, reloadWhenVisible = false;
+function sceneBadge(text) { const b = $('#sceneBadge'); b.textContent = text || ''; b.hidden = !text; }
+addEventListener('visibilitychange', () => { dlog(document.hidden ? 'hidden' : 'visible'); if (!document.hidden && reloadWhenVisible) { reloadWhenVisible = false; reloadScene(); } });
+function reloadScene() {
+  if (!st.S) return loadScene();                       // nothing usable yet: load it directly
+  if (document.hidden) { reloadWhenVisible = true; return; }
+  dlog('reload');
+  staging?.remove(); clearTimeout(stagingTimer);
+  staging = document.createElement('iframe');
+  staging.title = 'scene (loading)';
+  Object.assign(staging.style, { position: 'absolute', left: '0', top: '0', border: '0', width: `${st.w}px`, height: `${st.h}px`, opacity: '0', zIndex: '-1', pointerEvents: 'none' });   // invisible but still rendering (a visibility:hidden frame is throttled and never readies)
+  frameEl.after(staging);
+  staging.src = `/scenes/${st.scene}/?editor&t=${Date.now()}`;
+  sceneBadge('Updating…');
+  stagingTimer = setTimeout(() => sceneBadge('Scene didn’t load — showing the last good version'), 10000);
+}
 function loadScene() {
+  dlog('load');
+  staging?.remove(); staging = null; clearTimeout(stagingTimer); sceneBadge('');
   st.S = null;
   if (!st.scene) {
     frameEl.srcdoc = `<body style="margin:0;height:100vh;display:grid;place-items:center;background:#16161a;color:#a9a9b3;font:16px -apple-system,system-ui;text-align:center">
@@ -67,8 +111,16 @@ function loadScene() {
 }
 
 addEventListener('message', (e) => {
-  if (e.data?.type !== 'studio:ready' || e.source !== frameEl.contentWindow) return;
+  if (e.data?.type !== 'studio:ready') return;
+  if (staging && e.source === staging.contentWindow) {   // the reloaded scene is ready: swap it in
+    clearTimeout(stagingTimer); sceneBadge('');
+    staging.id = 'frame'; staging.title = 'scene'; staging.removeAttribute('style');
+    frameEl.remove(); frameEl = staging; staging = null;
+    st.loadId = (st.loadId || 0) + 1; playImg.hidden = true; cachedSet = new Set();   // frames rendered before it are stale
+  } else if (e.source !== frameEl.contentWindow) return;
   const S = frameEl.contentWindow.__studio;
+  dlog('ready');
+  frameEl.contentWindow.addEventListener('error', (ev) => dlog('scene-error', { msg: ev.message }));
   Object.assign(st, { S, beats: S.beats(), frames: S.frames, fps: S.fps, w: S.width, h: S.height });
   frameEl.style.width = st.w + 'px'; frameEl.style.height = st.h + 'px';
   fit(); if (!st.zoomed) fitDefault(); seek(Math.min(st.frame, st.frames - 1), true); loadNotes(); loadExportSizes();
@@ -183,7 +235,15 @@ function preload() {
 }
 // the live scene underneath follows the playhead a moment later (it's only read for notes); syncLive() catches it up now
 let liveTimer = null;
-const syncLive = () => { clearTimeout(liveTimer); st.S?.seek(st.frame); };
+const syncLive = () => {
+  clearTimeout(liveTimer);
+  if (!st.S) return dragging && dlog('live', { S: false });
+  const t = performance.now();
+  try { st.S.seek(st.frame); if (sceneErr) { sceneErr = ''; sceneBadge(''); } }
+  catch (err) { sceneErr = `Scene error at frame ${Math.round(st.frame)}: ${err.message}`; sceneBadge(sceneErr); dlog('error', { msg: err.message }); }
+  if (dragging) dlog('live', { f: Math.round(st.frame), ms: Math.round(performance.now() - t), at: liveFrame() });
+};
+let sceneErr = '';
 const syncLiveSoon = () => { clearTimeout(liveTimer); liveTimer = setTimeout(syncLive, 120); };
 
 // cache bar on the ruler (like After Effects): green = rendered and ready, dim = not yet
@@ -218,7 +278,7 @@ async function playLoop() {
     const t0 = performance.now();
     const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
     let f = Math.floor(st.frame) + 1;
-    if (f > b) { if (st.loop) f = a; else { setPlaying(false); break; } }
+    if (f > b) { if (st.loop) { f = a; seek(a); } else { setPlaying(false); break; } }   // looping: move the playhead first, so the server renders around the start (it only renders near the playhead)
     for (let k = 0; k < AHEAD; k++) { const g = f + k; if (g <= b) renderedFrame(g).catch(() => {}); }   // render ahead
     let url;
     try { url = await renderedFrame(f); } catch { if (!st.playing) break; await new Promise((r) => { playTimer = setTimeout(r, 200); }); continue; }
@@ -329,18 +389,71 @@ function placeBar(bar, range, frame) {
 }
 function layoutRange() { rangeBox.style.display = 'none'; }   // spans show as note bars instead
 
+// Every drag goes through onDrag, and is tied to the button that started it (the left one: other buttons never start a
+// drag, see below). It ends when that button is released — on pointerup, or on the mouseup for that button, or a move
+// where it isn't held — and on pointercancel or a lost pointer capture. Chrome can be wrong about the *other* buttons:
+// when a release happens outside it (an app switch, a middle-click or trackpad gesture that opens something) it keeps
+// reporting that button as held, every later move looks like a drag, and pointerup never fires while it thinks one is
+// still down. So a drag only listens to its own button. It also ends when the window really loses focus or the tab
+// hides (⌘-Tab / Alt-Tab away; focus moving into the scene's iframe is not that: the document keeps focus), and any new
+// left press ends a drag still running, so a stale one can never block the next click.
+const drags = new Set();   // the stop functions of the drags in progress
+const BUTTON_BIT = [1, 4, 2, 8, 16];   // MouseEvent.button → its bit in MouseEvent.buttons
+function onDrag(target, e, move, end) {
+  let done = false;
+  const pid = e.pointerId, t0 = e.timeStamp, btn = e.button ?? 0, bit = BUTTON_BIT[btn] ?? 1;
+  const stop = (ev) => { if (done) return; done = true; cleanup(); end?.(ev); };
+  const mv = (ev) => { if (ev.pointerId !== pid) return; if (!(ev.buttons & bit)) return stop(ev); move(ev); };
+  // a press handed over as a made-up pointerdown (see below) can't hold pointer capture: Chrome drops it on the next
+  // move, so that drag follows the pointer on the window instead and ignores the lost capture
+  const real = e.isTrusted !== false, src = real ? target : window;
+  const ends = real ? ['pointerup', 'pointercancel', 'lostpointercapture'] : ['pointerup', 'pointercancel'];
+  const released = (ev) => { if (ev.button === btn) stop(ev); };   // its button came up, whatever Chrome thinks of the others
+  const left = () => setTimeout(() => { if (!document.hasFocus()) stop({ type: 'window-blur' }); });
+  const hid = () => { if (document.hidden) stop({ type: 'hidden' }); };
+  const press = (ev) => { if (ev.button === 0 && ev.timeStamp - t0 > 40) stop({ type: 'new-press' }); };   // a later left press (not the one that started it)
+  const cleanup = () => {
+    drags.delete(stop);
+    src.removeEventListener('pointermove', mv); ends.forEach((t) => src.removeEventListener(t, stop));
+    removeEventListener('mouseup', released, true);
+    removeEventListener('blur', left); document.removeEventListener('visibilitychange', hid);
+    removeEventListener('pointerdown', press, true); removeEventListener('mousedown', press, true);
+    try { if (target.hasPointerCapture?.(pid)) target.releasePointerCapture(pid); } catch {}
+  };
+  drags.add(stop);
+  src.addEventListener('pointermove', mv); ends.forEach((t) => src.addEventListener(t, stop));
+  addEventListener('mouseup', released, true);
+  addEventListener('blur', left); document.addEventListener('visibilitychange', hid);
+  addEventListener('pointerdown', press, true); addEventListener('mousedown', press, true);
+  return () => { done = true; cleanup(); };   // cancel without running end
+}
+const capture = (el, id) => { try { el.setPointerCapture(id); } catch {} };
+// Only the left button starts anything in the editor (scrubbing, note bars, spans, areas, curve handles): a middle or
+// right press is stopped here, before any handler sees it.
+let lastPointerDown = -1;
+addEventListener('pointerdown', (e) => { if (e.button === 0) lastPointerDown = e.timeStamp; else if (e.pointerType === 'mouse') e.stopPropagation(); }, true);
+// When Chrome thinks another button is still held, a left press fires no pointerdown at all (only a mousedown): hand the
+// editor a pointerdown for it anyway, so every press works the same either way.
+addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.timeStamp - lastPointerDown < 40 || !e.isTrusted) return;
+  dlog('synth-pointerdown', { buttons: e.buttons, on: describe(e.target) });
+  e.target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+    button: 0, buttons: e.buttons, clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY,
+    shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey }));
+}, true);
+
 let dragging = false;
-ruler.addEventListener('pointerdown', (e) => {
+function startScrub(e) {
   if (e.target.closest('#zoom')) return;
   deselect();
-  ruler.setPointerCapture(e.pointerId);
+  capture(ruler, e.pointerId);
   dragging = true;
+  dlog('down', { via: e.type, on: describe(e.target), ptr: e.pointerType, buttons: e.buttons, S: !!st.S, capture: ruler.hasPointerCapture(e.pointerId), focus: document.hasFocus(), active: describe(document.activeElement) });
   if (st.playing) setPlaying(false);
   seek(frameAt(e.clientX));
-  const move = (ev) => seek(frameAt(ev.clientX));
-  const up = () => { dragging = false; ruler.removeEventListener('pointermove', move); ruler.removeEventListener('pointerup', up); };
-  ruler.addEventListener('pointermove', move); ruler.addEventListener('pointerup', up);
-});
+  onDrag(ruler, e, (ev) => { dlog('move', { buttons: ev.buttons }); seek(frameAt(ev.clientX)); }, (ev) => { dragging = false; dlog('end', { by: ev?.type }); dflush('drag'); });
+}
+ruler.addEventListener('pointerdown', startScrub);
 
 // Hold Shift while scrubbing (ruler drag, arrow keys or playback) to record a span:
 // it starts where Shift goes down, follows the playhead, and opens as a note on release.
@@ -389,7 +502,7 @@ addEventListener('blur', stopRecording);
 function dragNote(e, n, bar) {
   e.stopPropagation();
   if (st.playing) setPlaying(false);
-  bar.setPointerCapture(e.pointerId);
+  capture(bar, e.pointerId);
   dragging = true;
   const mode = e.target.classList.contains('l') ? 'start' : e.target.classList.contains('r') ? 'end' : n.range ? 'slide' : 'point';
   const f0 = frameAt(e.clientX), r0 = n.range && [...n.range], p0 = n.frame;
@@ -406,7 +519,6 @@ function dragNote(e, n, bar) {
     if (range) setRange(range);
   };
   const up = () => {
-    bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up);
     dragging = false;
     if (!moved) return n === st.pending ? null : selectNote(n);
     if (range) frame = clamp(n.frame, range[0], range[1]);
@@ -414,7 +526,7 @@ function dragNote(e, n, bar) {
     if (n !== st.pending) fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { range, frame }));
     renderPanel();
   };
-  bar.addEventListener('pointermove', move); bar.addEventListener('pointerup', up);
+  onDrag(bar, e, move, up);
 }
 
 function dragNewRange(e) {
@@ -433,14 +545,13 @@ function dragNewRange(e) {
     placeBar(bar(), n.range); seek(f); renderPanelHead();
   };
   const up = () => {
-    removeEventListener('pointermove', move); removeEventListener('pointerup', up);
     dragging = false;
     n.beats = st.beats.filter((b) => b.f1 >= n.range[0] && b.f0 <= n.range[1] && b.f1 > b.f0).map(({ name, f0, f1 }) => ({ name, f0, f1 }));
     seek(n.range[0]);
     $('#panel textarea')?.focus({ preventScroll: true });
   };
   // listen on the window: the row is rebuilt when the note layer is added
-  addEventListener('pointermove', move); addEventListener('pointerup', up);
+  onDrag(window, e, move, up);
 }
 function renderPanelHead() { const w = $('#panel .where'); if (w && st.pending) w.textContent = where(st.pending); }
 
@@ -459,7 +570,7 @@ const startSpot = (e) => {
   drag.x1 = drag.x0; drag.y1 = drag.y0;
   const move = (ev) => { const q = overlay.getBoundingClientRect(); drag.x1 = cx(ev.clientX - q.left, q.width); drag.y1 = cx(ev.clientY - q.top, q.height); drawOverlay(); };
   const up = () => {
-    removeEventListener('pointermove', move); removeEventListener('pointerup', up); dismissDrag = null;
+    dismissDrag = null;
     let x = Math.min(drag.x0, drag.x1) / st.k, y = Math.min(drag.y0, drag.y1) / st.k;
     let w = Math.abs(drag.x1 - drag.x0) / st.k, hh = Math.abs(drag.y1 - drag.y0) / st.k;
     drag = null;
@@ -469,8 +580,8 @@ const startSpot = (e) => {
     if (span) { span.region = region; st.areaSel = true; setComment(false); retarget(span); renderPanel(); }   // area for the open span note
     else startNote({ region });
   };
-  addEventListener('pointermove', move); addEventListener('pointerup', up);
-  dismissDrag = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); drag = null; dismissDrag = null; drawOverlay(); };
+  const cancel = onDrag(window, e, move, up);
+  dismissDrag = () => { cancel(); drag = null; dismissDrag = null; drawOverlay(); };
   drawOverlay();
 };
 overlay.addEventListener('pointerdown', (e) => { if (!st.comment) { deselect(); return; } startSpot(e); });
@@ -501,7 +612,7 @@ function editBox(n) {
     if (n.range) { st.areaSel = true; el.classList.add('picked'); }   // a span note's area can be selected on its own (⌫ removes just the area)
     const mode = e.target.classList.contains('grip') ? 'size' : 'move';
     const sx = e.clientX, sy = e.clientY, r0 = { ...n.region }, W = st.S.width, H = st.S.height;
-    el.setPointerCapture(e.pointerId);
+    capture(el, e.pointerId);
     el.classList.add('dragging');
     const mv = (ev) => {
       const dx = (ev.clientX - sx) / st.k, dy = (ev.clientY - sy) / st.k;
@@ -511,11 +622,10 @@ function editBox(n) {
       place(el, n.region);
     };
     const up = () => {
-      el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up);
       el.classList.remove('dragging');
       if (n.region.x !== r0.x || n.region.y !== r0.y || n.region.w !== r0.w || n.region.h !== r0.h) retarget(n);
     };
-    el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up);
+    onDrag(el, e, mv, up);
   });
   return el;
 }
@@ -838,31 +948,26 @@ function renderPanel() {
   if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, 'Claude'), n.reply));
 }
 
-// cubic-bezier editor with a speed graph; y may leave 0..1 (anticipation / overshoot)
+// cubic-bezier editor (the value graph only); y may leave 0..1 (anticipation / overshoot)
 function bezierEditor(points, onInput, onCommit) {
-  const W = 300, H = 210, pad = 20, Y0 = -0.6, Y1 = 1.6, SH = 54, SNAP = 4;   // SNAP: degrees from flat within which an arm snaps flat
+  const W = 300, H = 210, pad = 20, Y0 = -0.6, Y1 = 1.6, SH = 0, SNAP = 4;   // SNAP: degrees from flat within which an arm snaps flat
   const p = [...points];
   const X = (x) => pad + x * (W - 2 * pad), Y = (y) => pad + ((Y1 - y) / (Y1 - Y0)) * (H - 2 * pad);
   const ix = (px) => (px - pad) / (W - 2 * pad), iy = (py) => Y1 - ((py - pad) / (H - 2 * pad)) * (Y1 - Y0);
   const svg = svgEl('svg', { class: 'bz', viewBox: `0 0 ${W} ${H + SH}` });
   for (const y of [0, 1]) svg.append(svgEl('line', { class: 'grid', x1: pad, x2: W - pad, y1: Y(y), y2: Y(y) }));
   svg.append(svgEl('line', { class: 'base', x1: X(0), y1: Y(0), x2: X(1), y2: Y(1) }));
-  const arm1 = svgEl('line', { class: 'arm' }), arm2 = svgEl('line', { class: 'arm' }), curve = svgEl('path', { class: 'curve' }), speed = svgEl('path', { class: 'speed' });
-  const sl = svgEl('text', { x: pad, y: H + 8 }); sl.textContent = 'speed';
-  svg.append(speed, sl, arm1, arm2, curve);
+  const arm1 = svgEl('line', { class: 'arm' }), arm2 = svgEl('line', { class: 'arm' }), curve = svgEl('path', { class: 'curve' });
+  svg.append(arm1, arm2, curve);
   const hs = [0, 1].map(() => { const c = svgEl('circle', { class: 'h', r: 7 }); svg.append(c); return c; });
   const set = (el, a) => Object.entries(a).forEach(([k, v]) => el.setAttribute(k, v));
   function draw() {
     curve.setAttribute('d', `M${X(0)},${Y(0)} C${X(p[0])},${Y(p[1])} ${X(p[2])},${Y(p[3])} ${X(1)},${Y(1)}`);
     set(arm1, { x1: X(0), y1: Y(0), x2: X(p[0]), y2: Y(p[1]) }); set(arm2, { x1: X(1), y1: Y(1), x2: X(p[2]), y2: Y(p[3]) });
     set(hs[0], { cx: X(p[0]), cy: Y(p[1]) }); set(hs[1], { cx: X(p[2]), cy: Y(p[3]) });
-    const e = bezier(...p), n = 80, d = 1 / n, vs = [];
-    for (let i = 0; i <= n; i++) { const t = i / n, a = Math.max(0, t - d), b = Math.min(1, t + d); vs.push(Math.abs((e(b) - e(a)) / (b - a))); }
-    const mx = Math.max(...vs, 1e-6), base = H + SH - 4, top = H + 14;
-    speed.setAttribute('d', `M${X(0)},${base} ` + vs.map((v, i) => `L${X(i / n)},${base - (v / mx) * (base - top)}`).join(' ') + ` L${X(1)},${base} Z`);
   }
   hs.forEach((c, i) => c.addEventListener('pointerdown', (e) => {
-    c.setPointerCapture(e.pointerId);
+    capture(c, e.pointerId);
     const move = (ev) => {
       const r = svg.getBoundingClientRect();
       p[i * 2] = r2(clamp(ix(((ev.clientX - r.left) / r.width) * W), 0, 1));
@@ -874,8 +979,8 @@ function bezierEditor(points, onInput, onCommit) {
       (i ? arm2 : arm1).classList.toggle('snap', snapped);
       draw(); onInput([...p]);
     };
-    const up = () => { c.removeEventListener('pointermove', move); c.removeEventListener('pointerup', up); arm1.classList.remove('snap'); arm2.classList.remove('snap'); onCommit([...p]); };
-    c.addEventListener('pointermove', move); c.addEventListener('pointerup', up);
+    const up = () => { arm1.classList.remove('snap'); arm2.classList.remove('snap'); onCommit([...p]); };
+    onDrag(c, e, move, up);
   }));
   draw();
   return svg;
@@ -887,6 +992,9 @@ $('#playBtn').onclick = () => setPlaying(!st.playing);
 const EXPORT_SCALES = [1, 0.75, 0.5, 0.25];
 const EST_BPPF = 0.0067;   // bytes per pixel per frame, used until this scene has a real export to calibrate from
 let exportCalib = null;
+const WEBM_RATIO = 0.74;   // a WebM (VP9) is about this much of an MP4 (H.264) at the same quality (measured on this studio's films)
+const exportFmt = () => $('#exportFmt').value || 'mp4';
+const exportLabel = () => `⤓ Export ${exportFmt() === 'webm' ? 'WebM' : 'MP4'}`;
 const fmtSize = (b) => (b >= 1e6 ? `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
 function fillExportSizes() {
   const sel = $('#exportSize');
@@ -895,7 +1003,8 @@ function fillExportSizes() {
   EXPORT_SCALES.forEach((k) => {
     const W = Math.round((st.w * k) / 2) * 2, H = Math.round((st.h * k) / 2) * 2, c = exportCalib;
     // H.264 needs relatively more bits per pixel at small sizes, so size scales a little slower than pixel count
-    const bytes = c ? c.bytes * (st.frames / c.frames) * Math.pow((W * H) / (c.w * c.h), 0.8) : EST_BPPF * W * H * st.frames;
+    const mp4 = c ? (c.bytes / (c.fmt === 'webm' ? WEBM_RATIO : 1)) * (st.frames / c.frames) * Math.pow((W * H) / (c.w * c.h), 0.8) : EST_BPPF * W * H * st.frames;
+    const bytes = mp4 * (exportFmt() === 'webm' ? WEBM_RATIO : 1);
     sel.append(h('option', { value: String(k) }, `${Math.round(k * 100)}% (${W}×${H}) · ~${fmtSize(bytes)}`));
   });
   if (keep && EXPORT_SCALES.includes(+keep)) sel.value = keep;
@@ -907,9 +1016,15 @@ async function loadExportSizes() {
   try { const j = await (await fetch(`/api/export?scene=${st.scene}`)).json(); if (j.state === 'running' || j.state === 'stopping') pollExport(); } catch {}   // pick a running export back up after a reload
 }
 $('#exportSize').onchange = () => { try { localStorage.setItem('ms.exportScale', $('#exportSize').value); } catch {} };
+try { const f = localStorage.getItem('ms.exportFmt'); if (f) $('#exportFmt').value = f; } catch {}
+$('#exportBtn').textContent = exportLabel();
+$('#exportFmt').onchange = () => {
+  try { localStorage.setItem('ms.exportFmt', exportFmt()); } catch {}
+  fillExportSizes(); const b = $('#exportBtn'); if (!b.dataset.file) b.textContent = exportLabel();
+};
 let exportTimer = null;
 function exportUi(running) {
-  $('#exportBtn').disabled = running; $('#exportSize').disabled = running; $('#exportStop').hidden = !running;
+  $('#exportBtn').disabled = running; $('#exportSize').disabled = running; $('#exportFmt').disabled = running; $('#exportStop').hidden = !running;
 }
 async function pollExport() {
   clearTimeout(exportTimer);
@@ -924,15 +1039,15 @@ async function pollExport() {
   if (j.state === 'done') {
     b.textContent = `⤓ Download (${(j.size / 1e6).toFixed(1)} MB)`; b.dataset.file = j.file; b.classList.add('on');
     loadExportSizes();   // the new file sharpens the estimates
-    exportTimer = setTimeout(() => { delete b.dataset.file; b.classList.remove('on'); b.textContent = '⤓ Export MP4'; }, 60000);
-  } else if (j.state === 'stopped') b.textContent = '⤓ Export MP4';
+    exportTimer = setTimeout(() => { delete b.dataset.file; b.classList.remove('on'); b.textContent = exportLabel(); }, 60000);
+  } else if (j.state === 'stopped') b.textContent = exportLabel();
   else if (j.state === 'failed') { b.textContent = 'Export failed — retry'; console.error(j.log); }
 }
 $('#exportBtn').onclick = async () => {
   const b = $('#exportBtn');
   if (b.dataset.file) { const a = h('a', { href: '/' + b.dataset.file, download: '' }); document.body.append(a); a.click(); a.remove(); return; }
   delete b.dataset.file; b.classList.remove('on');
-  await fetch(`/api/export?scene=${st.scene}&scale=${$('#exportSize').value || 1}`, { method: 'POST' });
+  await fetch(`/api/export?scene=${st.scene}&scale=${$('#exportSize').value || 1}&fmt=${exportFmt()}`, { method: 'POST' });
   pollExport();
 };
 $('#exportStop').onclick = async () => { $('#exportStop').disabled = true; await fetch(`/api/export?scene=${st.scene}`, { method: 'DELETE' }); $('#exportStop').disabled = false; pollExport(); };

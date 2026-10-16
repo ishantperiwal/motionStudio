@@ -1,0 +1,8 @@
+#stage { --stage-bg: #ECEEF1; }
+/* the sample card: the Motion Ops card back at 1.4× the film's 420 × 621.7, centred, flat */
+#card { left: 666px; top: 104.8px; width: 588px; height: 870.4px; border-radius: 42px; overflow: hidden;
+  box-shadow: 0 14px 14px -6px rgba(18, 12, 4, .32), 0 34px 60px -24px rgba(16, 33, 63, .4); }   /* soft, no dark ring at the edge */
+#card > img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; object-fit: cover; }
+/* the film's printed-plastic bevel (not part of the shine) */
+#card .bevel { position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.14) 0%, rgba(255,255,255,.01) 45%, rgba(0,0,0,.12) 100%); box-shadow: inset 0 1px 1.5px rgba(255,255,255,.35); }

@@ -1,0 +1,22 @@
+@font-face { font-family: 'InterLocal'; font-weight: 500; src: url('/vendor/@fontsource/inter/files/inter-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'InterLocal'; font-weight: 600; src: url('/vendor/@fontsource/inter/files/inter-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'InterLocal'; font-weight: 700; src: url('/vendor/@fontsource/inter/files/inter-latin-700-normal.woff2') format('woff2'); }
+#stage { --stage-bg: #ECEEF1; }
+/* the sample panel: centred, 560×700 */
+#card { left: 680px; top: 190px; width: 560px; height: 700px; padding: 44px; border-radius: 28px; background: #0F2648; color: #fff;
+  display: flex; flex-direction: column; font-family: 'InterLocal', system-ui, sans-serif; box-shadow: 0 40px 80px -30px rgba(16, 33, 63, .45); }
+.head { display: flex; align-items: center; gap: 22px; height: 64px; }
+.icon { position: relative; flex: none; width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #3FD3E0, #7FD1A0 55%, #D6D77A); }
+.icon svg { position: absolute; inset: 0; width: 64px; height: 64px; }
+.titles { display: flex; flex-direction: column; gap: 6px; }
+.title { font-weight: 700; font-size: 34px; line-height: 1.1; letter-spacing: -0.4px; }
+.sub { font-weight: 500; font-size: 19px; color: #9FB8DD; }
+.list { margin-top: 32px; padding: 10px 24px; border-radius: 18px; background: #0A1E3C; }
+.row { display: flex; align-items: center; gap: 16px; height: 72px; border-top: 1px solid rgba(159, 184, 221, .12); }
+.row:first-child { border-top: 0; }
+.sw { flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--c); }
+.nm { font-weight: 600; font-size: 22px; }
+.val { margin-left: auto; font-weight: 500; font-size: 20px; color: #7FA6E0; font-variant-numeric: tabular-nums; }
+.btn { margin-top: auto; height: 80px; border-radius: 40px; background: #2A6FD6; display: flex; align-items: center; justify-content: center; gap: 12px;
+  font-weight: 600; font-size: 24px; }
+.arrow { width: 24px; height: 24px; }

@@ -7,14 +7,17 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 
-// Chrome for capturing frames. Its default GPU memory limit is too small for heavy 3D scenes: past it, Chrome quietly
-// skips drawing parts of a frame (layers come out blank) even in screenshots. A higher limit keeps every frame complete.
-export const CHROME = { channel: 'chrome', args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'] };
+// The browser for capturing frames: Playwright's own Chromium (npx playwright install chromium), never the user's Google
+// Chrome app. A hidden instance of the real Chrome app takes its place on macOS: with the user's Chrome closed, clicking
+// Chrome just wakes the invisible one and no window opens. Chromium can't decode H.264, so videos in scenes are WebM.
+// Its default GPU memory limit is too small for heavy 3D scenes: past it, frames quietly skip drawing parts (layers come
+// out blank) even in screenshots. A higher limit keeps every frame complete.
+export const CHROME = { args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'] };
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.md': 'text/plain; charset=utf-8', '.map': 'application/json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.webm': 'video/webm', '.md': 'text/plain; charset=utf-8', '.map': 'application/json',
 };
 
 const inside = (base, p) => { const r = path.resolve(base, '.' + p); return r.startsWith(base + path.sep) || r === base ? r : null; };
@@ -88,8 +91,10 @@ function startPages(p, base, scene) {
     return b;
   })();
   p.pages = [];
+  const opened = [];   // every page this attempt opens, so a failed start can close them all
   p.ready = Promise.all(Array.from({ length: PREVIEW.pages }, async () => {   // set before any await, so concurrent requests share it
     const page = await (await browserP).newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: p.scale });
+    opened.push(page);
     await page.goto(`${base}/scenes/${scene}/?render`);
     await page.waitForFunction(() => window.animationReady === true, null, { timeout: 30000 });
     const m = await page.evaluate(() => ({ width: window.__studio.width, height: window.__studio.height, fps: window.__studio.fps, frames: window.__studio.frames }));
@@ -97,7 +102,9 @@ function startPages(p, base, scene) {
     Object.assign(p, { fps: m.fps, frames: m.frames });
     p.pages.push({ page, busy: false });
   })).then(() => pumpPreview(p));
-  p.ready.catch((e) => { console.warn('[preview] render pages failed to start:', e.message); p.ready = null; browserP = null; });   // retried on the next request
+  // a failed start (usually a scene that doesn't load) closes the pages it opened and keeps the browser: dropping the
+  // browser here used to leave it running, so each failure leaked a whole Chrome
+  p.ready.catch((e) => { console.warn('[preview] render pages failed to start:', e.message); p.ready = null; p.pages = []; opened.forEach((pg) => pg.close().catch(() => {})); });   // retried on the next request
 }
 async function previewPool(base, scene, scale, focus) {
   const key = `${scene}@${scale}`;   // one pool per view size, so two editors at different sizes don't undo each other
@@ -183,20 +190,23 @@ setInterval(() => {   // idle render pages close; their frames stay on disk for 
   }
 }, 60000).unref();
 
-// themes/<id>/THEME.md (+ preview.mp4, poster.png, aspects.png): the gallery at /themes/ lists them
-function listThemes() {
-  const dir = path.join(ROOT, 'themes');
+// themes/<id>/THEME.md and techniques/<id>/TECHNIQUE.md (+ preview.mp4, poster.png, aspects.png; a technique's live
+// demo/): the galleries at /themes/ and /techniques/ list them
+function listShelf(shelf, docFile) {
+  const dir = path.join(ROOT, shelf);
   let ids = [];
-  try { ids = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, 'THEME.md'))).map((d) => d.name); } catch { return []; }
+  try { ids = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, docFile))).map((d) => d.name); } catch { return []; }
   return ids.map((id) => {
-    const md = fs.readFileSync(path.join(dir, id, 'THEME.md'), 'utf8');
+    const md = fs.readFileSync(path.join(dir, id, docFile), 'utf8');
     const title = (md.match(/^#\s+(.+)$/m) || [, id])[1].trim();
     const summary = (md.replace(/^#.*$/m, '').trim().split(/\n\s*\n/)[0] || '').replace(/[*`_]/g, '').replace(/\s+/g, ' ').trim();
-    const has = (f) => fs.existsSync(path.join(dir, id, f)) ? `/themes/${id}/${f}` : null;
-    return { id, title, summary, preview: has('preview.mp4'), poster: has('poster.png'), aspects: has('aspects.png'), doc: `/themes/${id}/THEME.md`,
-      updated: fs.statSync(path.join(dir, id, 'THEME.md')).mtimeMs };
+    const has = (f) => fs.existsSync(path.join(dir, id, f)) ? `/${shelf}/${id}/${f}` : null;
+    const kit = md.match(/runtime\/kits\/[\w-]+\.js/)?.[0];   // the reusable code a technique names
+    return { id, title, summary, preview: has('preview.mp4'), poster: has('poster.png'), aspects: has('aspects.png'), demo: has('demo/index.html')?.replace(/index\.html$/, '') ?? null,
+      kit: kit && fs.existsSync(path.join(ROOT, kit)) ? `/${kit}` : null, doc: `/${shelf}/${id}/${docFile}`, updated: fs.statSync(path.join(dir, id, docFile)).mtimeMs };
   }).sort((a, b) => b.updated - a.updated);
 }
+const listThemes = () => listShelf('themes', 'THEME.md'), listTechniques = () => listShelf('techniques', 'TECHNIQUE.md');
 
 const exports_ = {}, exportProcs = {};
 // size calibration for export estimates: the scene's latest finished export (bytes, dimensions, frame count via ffprobe)
@@ -204,14 +214,14 @@ const calibCache = {};
 function exportCalib(scene) {
   const dir = path.join(ROOT, 'out');
   let files = [];
-  try { files = fs.readdirSync(dir).filter((f) => new RegExp(`^${scene}-\\d+(-\\d+pct)?\\.mp4$`).test(f)); } catch { return null; }
+  try { files = fs.readdirSync(dir).filter((f) => new RegExp(`^${scene}-\\d+(-\\d+pct)?\\.(mp4|webm)$`).test(f)); } catch { return null; }
   const latest = files.map((f) => ({ f, st: fs.statSync(path.join(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs)[0];
   if (!latest) return null;
   const key = `${latest.f}:${latest.st.mtimeMs}`;
   if (calibCache[scene]?.key === key) return calibCache[scene].v;
-  const r = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,nb_frames', '-of', 'json', path.join(dir, latest.f)], { encoding: 'utf8' });
+  const r = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,nb_frames,duration', '-of', 'json', path.join(dir, latest.f)], { encoding: 'utf8' });
   let v = null;
-  try { const st = JSON.parse(r.stdout).streams[0]; v = { bytes: latest.st.size, w: +st.width, h: +st.height, frames: +st.nb_frames }; } catch {}
+  try { const st = JSON.parse(r.stdout).streams[0]; v = { bytes: latest.st.size, w: +st.width, h: +st.height, frames: +st.nb_frames || Math.round(+st.duration * 25), fmt: latest.f.endsWith('.webm') ? 'webm' : 'mp4' }; } catch {}
   calibCache[scene] = { key, v };
   return v;
 }
@@ -254,6 +264,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         return send(res, 200, jpg, 'image/jpeg');
       }
       if (p === '/api/themes') return send(res, 200, listThemes());
+      if (p === '/api/techniques') return send(res, 200, listTechniques());
 
       let m;
       if (p === '/api/notes' && req.method === 'GET') {
@@ -271,6 +282,13 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         return send(res, 200, { ok: true });
       }
       if (p === '/api/go' && req.method === 'GET') return send(res, 200, { pending: fs.existsSync(path.join(ROOT, 'notes', '_go.json')) });
+      // the editor's scrub log (diagnostics): one JSON line per ruler drag, in out/.diag/scrub.log
+      if (p === '/api/diag' && req.method === 'POST') {
+        const d = await readBody(req);
+        await fsp.mkdir(path.join(ROOT, 'out', '.diag'), { recursive: true });
+        await fsp.appendFile(path.join(ROOT, 'out', '.diag', 'scrub.log'), JSON.stringify(d) + '\n');
+        return send(res, 200, { ok: true });
+      }
 
       // Export: runs the renderer (motion blur, H.264, CRF 18) and reports progress
       if (p === '/api/export') {
@@ -280,7 +298,8 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         if (req.method === 'POST' && !(job && job.state === 'running')) {
           const scale = Math.min(1, Math.max(0.1, +url.searchParams.get('scale') || 1));   // 1 = full size, 0.5 = half, …
           const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
-          const file = `out/${scene}-${stamp}${scale < 1 ? `-${Math.round(scale * 100)}pct` : ''}.mp4`;
+          const ext = url.searchParams.get('fmt') === 'webm' ? 'webm' : 'mp4';   // WebM: VP9, ~25% smaller, for the web
+          const file = `out/${scene}-${stamp}${scale < 1 ? `-${Math.round(scale * 100)}pct` : ''}.${ext}`;
           const j = exports_[scene] = { state: 'running', done: 0, total: 0, file, scale, started: Date.now() };
           // its own process group, so Stop can end the renderer together with its browsers and ffmpeg
           const child = spawn(process.execPath, ['render/render.mjs', scene, '--blur', '6', '--crf', '18', '--scale', String(scale), '--out', file], { cwd: ROOT, detached: true });

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Techniques · Motion Studio</title>
+<style>
+  :root { --bg: #111317; --panel: #1a1d23; --line: #2a2e36; --text: #e8eaee; --muted: #9aa0ab; --accent: #4f8cff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; font-weight: 650; }
+  header span { color: var(--muted); }
+  header nav { margin-left: auto; display: flex; gap: 18px; }
+  header a { color: var(--muted); text-decoration: none; }
+  header a:hover { color: var(--text); }
+  main { padding: 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; transition: border-color .15s; }
+  .tile:hover { border-color: #3a404b; }
+  .media { position: relative; aspect-ratio: 16 / 10; background: #0b0d10; }
+  .media img, .media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .media video { opacity: 0; transition: opacity .15s; }
+  .tile.playing .media video { opacity: 1; }
+  .media .hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: #fff; background: rgba(0,0,0,.45); padding: 2px 7px; border-radius: 4px; }
+  .tile.playing .hint { display: none; }
+  .meta { padding: 12px 14px 14px; }
+  .meta b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .meta p { margin: 0; color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .empty { color: var(--muted); padding: 40px 24px; }
+  /* detail view: the live demo, links to it and its code, and the notes */
+  #detail { position: fixed; inset: 0; background: rgba(8,9,12,.92); display: none; padding: 28px; overflow: auto; }
+  #detail.on { display: block; }
+  #detail .wrap { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  #detail video, #detail iframe { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 8px; display: block; background: #000; }
+  #detail .links { display: flex; gap: 10px; margin-top: 12px; }
+  #detail .links a { color: var(--text); text-decoration: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; font-size: 13px; }
+  #detail .links a:hover { border-color: #3a404b; }
+  #detail pre { margin: 0; white-space: pre-wrap; font: 12.5px/1.55 ui-monospace, Menlo, monospace; color: #cfd3da; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; max-height: calc(100vh - 56px); overflow: auto; }
+  #detail .close { position: fixed; top: 14px; right: 18px; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  @media (max-width: 900px) { #detail .wrap { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><h1>Techniques</h1><span>Hover to play · click for the live demo, its code and notes</span><nav><a href="/themes/">Themes</a><a href="/editor/">← Editor</a></nav></header>
+<main id="grid"></main>
+<div id="detail"><button class="close" title="Close (Esc)">✕</button><div class="wrap"><div id="dMedia"></div><pre id="dDoc"></pre></div></div>
+<script>
+const grid = document.getElementById('grid'), detail = document.getElementById('detail');
+const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, attrs); e.append(...kids); return e; };
+
+async function load() {
+  const list = await (await fetch('/api/techniques')).json();
+  grid.innerHTML = '';
+  if (!list.length) { grid.append(el('div', { className: 'empty', textContent: 'No techniques yet. Add a folder under techniques/ with a TECHNIQUE.md.' })); return; }
+  for (const t of list) {
+    const media = el('div', { className: 'media' });
+    if (t.poster) media.append(el('img', { src: t.poster, alt: '' }));
+    let video = null;
+    if (t.preview) {   // only fetched once you hover, so the page stays light as techniques pile up
+      video = el('video', { muted: true, loop: true, playsInline: true, preload: 'none' });
+      video.dataset.src = t.preview;
+      media.append(video, el('span', { className: 'hint', textContent: '▶ hover' }));
+    }
+    const tile = el('div', { className: 'tile' }, media, el('div', { className: 'meta' }, el('b', { textContent: t.title }), el('p', { textContent: t.summary })));
+    if (video) {
+      let over = false;
+      const play = () => { if (over) video.play().catch(() => {}); };
+      tile.addEventListener('mouseenter', () => {
+        over = true; tile.classList.add('playing');
+        if (!video.getAttribute('src')) { video.src = video.dataset.src; video.addEventListener('canplay', play, { once: true }); video.load(); }   // first hover: start once it can
+        else { video.currentTime = 0; play(); }
+      });
+      tile.addEventListener('mouseleave', () => { over = false; video.pause(); tile.classList.remove('playing'); });
+    }
+    tile.addEventListener('click', () => open(t));
+    grid.append(tile);
+  }
+}
+
+async function open(t) {
+  const m = document.getElementById('dMedia'); m.innerHTML = '';
+  if (t.demo) m.append(el('iframe', { src: t.demo, title: `${t.title}: live demo` }));   // the live scene, playing on its own clock
+  else if (t.preview) m.append(el('video', { src: t.preview, controls: true, autoplay: true, loop: true, muted: true }));
+  const links = el('div', { className: 'links' });
+  if (t.demo) links.append(el('a', { href: t.demo, target: '_blank', textContent: 'Open the demo ↗' }), el('a', { href: `${t.demo}scene.js`, target: '_blank', textContent: 'Demo code ↗' }));
+  if (t.kit) links.append(el('a', { href: t.kit, target: '_blank', textContent: `Kit: ${t.kit.split('/').pop()} ↗` }));
+  if (links.children.length) m.append(links);
+  document.getElementById('dDoc').textContent = await (await fetch(t.doc)).text();
+  detail.classList.add('on');
+}
+const close = () => { detail.classList.remove('on'); document.getElementById('dMedia').innerHTML = ''; };   // removing the iframe stops the demo
+detail.querySelector('.close').onclick = close;
+detail.addEventListener('click', (e) => { if (e.target === detail) close(); });
+addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+load();
+</script>
+</body>
+</html>

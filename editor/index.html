@@ -12,16 +12,19 @@
     <button id="loopItem" role="menuitemcheckbox" aria-checked="false" title="Loop the in/out range"><span class="chk">✓</span>Loop the video<kbd>L</kbd></button>
     <a id="openScene" role="menuitem" target="_blank" title="Open the scene on its own"><span class="chk"></span>Preview in full screen<kbd>↗</kbd></a>
     <a id="themesLink" role="menuitem" href="/themes/" target="_blank" title="Finished films to reference"><span class="chk"></span>Theme library<kbd>↗</kbd></a>
+    <a id="techniquesLink" role="menuitem" href="/techniques/" target="_blank" title="Reusable motion moves, each with a live demo and a kit"><span class="chk"></span>Technique library<kbd>↗</kbd></a>
   </div>
   <select id="scenePick" title="Scene"></select>
   <button id="playBtn" title="Play / pause (Space)">▶</button>
+  <span id="sceneBadge" hidden></span>
   <span id="fpsBadge" hidden title="Every frame is shown fully painted; the scene is too heavy to paint at full speed here, so playback is slower than real time. Export is unaffected."></span>
   <div id="rangeOut" class="muted"></div>
   <div id="rec" title="Hold Shift while scrubbing to record a span note">● REC</div>
   <div class="spacer"></div>
   <div id="exportGroup">
     <select id="exportSize" title="Export size"></select>
-    <button id="exportBtn" title="Export MP4: motion blur, high quality, at the size picked on the left">⤓ Export MP4</button>
+    <select id="exportFmt" title="Export format: MP4 (H.264) plays everywhere; WebM (VP9) is ~25% smaller for the same quality, for the web"><option value="mp4">MP4</option><option value="webm">WebM</option></select>
+    <button id="exportBtn" title="Export: motion blur, high quality, at the size and format picked on the left">⤓ Export MP4</button>
     <button id="exportStop" hidden title="Stop the export">■ Stop</button>
   </div>
   <button id="sendBtn" class="send" title="Ask Claude to work the open notes now">▶ Send to Claude</button>

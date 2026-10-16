@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Construct reveal – demo</title>
+<script type="importmap">{"imports":{"gsap":"/vendor/gsap/index.js","gsap/":"/vendor/gsap/","roughjs":"/vendor/roughjs/bundled/rough.esm.js","pixi.js":"/vendor/pixi.js/dist/pixi.mjs","three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","lottie-web":"/vendor/lottie-web/build/player/esm/lottie_svg.min.js","@studio/":"/runtime/"}}</script>
+<link rel="stylesheet" href="/runtime/stage.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage">
+  <div id="card" class="a" data-name="Card (the real UI)">
+    <div class="head">
+      <div class="icon" data-name="Card icon"><svg viewBox="0 0 64 64"><path d="M17,45 C31,45 33,19 47,19" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg></div>
+      <div class="titles"><div><span class="title">Motion tokens</span></div><div><span class="sub">5 easings · synced from Figma</span></div></div>
+    </div>
+    <div class="list" data-name="Token list">
+      <div class="row"><i class="sw" style="--c:#3FD3E0"></i><span class="nm">Page transition</span><span class="val">550 ms</span></div>
+      <div class="row"><i class="sw" style="--c:#7FD1A0"></i><span class="nm">Bottom sheet</span><span class="val">400 ms</span></div>
+      <div class="row"><i class="sw" style="--c:#D6D77A"></i><span class="nm">Pop-up</span><span class="val">300 ms</span></div>
+      <div class="row"><i class="sw" style="--c:#FF9E7A"></i><span class="nm">Toast</span><span class="val">250 ms</span></div>
+      <div class="row"><i class="sw" style="--c:#A98BFF"></i><span class="nm">Button tap</span><span class="val">150 ms</span></div>
+    </div>
+    <div class="btn" data-name="Apply button"><span class="lbl">Apply to frames</span><svg class="arrow" viewBox="0 0 24 24"><path d="M4,12 H20 M14,6 L20,12 L14,18" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+  </div>
+</div>
+<script type="module" src="scene.js"></script>
+</body>
+</html>
