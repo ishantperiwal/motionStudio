@@ -11,8 +11,13 @@
     "new-scene": "node tools/new-scene.mjs"
   },
   "dependencies": {
+    "@fontsource/big-shoulders-display": "^5.3.0",
+    "@fontsource/bricolage-grotesque": "^5.3.0",
+    "@fontsource/fraunces": "^5.3.0",
+    "@fontsource/instrument-sans": "^5.3.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/manrope": "^5.3.0",
+    "@fontsource/unbounded": "^5.3.0",
     "gsap": "^3.13.0",
     "lottie-web": "^5.12.2",
     "p5": "^1.11.3",
