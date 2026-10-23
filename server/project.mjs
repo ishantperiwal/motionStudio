@@ -21,4 +21,5 @@ export const PROJECT = flag ? path.resolve(here, flag)
   : process.env.MOTION_PROJECT ? path.resolve(here, process.env.MOTION_PROJECT)
   : listed ? path.resolve(ROOT, listed)
   : ROOT;
-if (!fs.existsSync(PROJECT)) { console.error(`Motion Studio: project folder not found: ${PROJECT}`); process.exit(1); }
+// a missing folder is usually a typo; only new-scene may create it (the first film of a new project)
+if (!fs.existsSync(PROJECT) && !/new-scene\.mjs$/.test(process.argv[1] || '')) { console.error(`Motion Studio: project folder not found: ${PROJECT}`); process.exit(1); }

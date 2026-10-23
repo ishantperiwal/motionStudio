@@ -39,6 +39,9 @@ Set the project folder, first one set wins:
 - `project.txt` in the studio folder: one line, the project folder relative to the studio (gitignored, per copy).
   This is the set-and-forget option: every command (dev, render, probe, new-scene, wait-for-notes) then uses it.
 
+The first `new-scene` in a project folder outside the studio creates the folder if needed and writes its
+`RUN-STUDIO.md`: that project's own commands for the studio, the notes watcher and renders (never overwritten).
+
 Unset, the project is the studio folder itself. A relative `--project` / `MOTION_PROJECT` is from where you typed the
 command. The dev server serves `/scenes/`, `/notes/` and `/out/` from the project and everything else (`/runtime/`,
 `/vendor/`, `/editor/`, `/themes/`, `/techniques/`, `/tokens/`) from the studio, so scenes keep using absolute

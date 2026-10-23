@@ -22,7 +22,8 @@ Tell the studio where the films are, once per copy:
 cd motionStudio
 echo ../film > project.txt
 ```
-(The path is relative to the studio folder.) Every command then uses that folder: the editor, exports, renders,
+(The path is relative to the studio folder.) The first new scene you create there also writes a `RUN-STUDIO.md` into
+that folder, with the exact commands for that project. Every command then uses that folder: the editor, exports, renders,
 new scenes and the notes watcher. Without `project.txt` everything stays inside the studio folder, as before.
 For a one-off you can also pass `--project <folder>` to any command (`npm run dev -- --project ../film`) or set
 `MOTION_PROJECT=<folder>`. When the studio starts it prints the project it's using.

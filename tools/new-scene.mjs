@@ -1,5 +1,7 @@
 // npm run new-scene -- <id> [--size 1920x1080] [--fps 25]
 // Creates scenes/<id>/ in the project (see server/project.mjs) with the import map, a stage, and a starter scene.js.
+// A project folder outside the studio also gets a RUN-STUDIO.md (once, never overwritten): its own commands to run the
+// studio, the notes watcher and renders.
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, PROJECT } from '../server/project.mjs';
@@ -60,3 +62,46 @@ s.beat('cam.push', { after: 'card.in', gap: 10, dur: 30, note: 'Push in' }, (b) 
 s.ready({ tail: 25 });
 `);
 console.log(`${PROJECT === ROOT ? `scenes/${id}` : dir} created → http://localhost:5173/editor/#${id}@0`);
+
+const guide = path.join(PROJECT, 'RUN-STUDIO.md');
+if (PROJECT !== ROOT && !fs.existsSync(guide)) {
+  // paths as seen from where this command was typed, so the guide's commands work from there
+  const here = process.env.INIT_CWD || process.cwd();
+  const studio = path.relative(here, ROOT) || '.', project = path.relative(here, PROJECT) || '.';
+  const q = (p) => (/[\s"]/.test(p) ? JSON.stringify(p) : p);
+  const npm = studio === '.' ? 'npm' : `npm --prefix ${q(studio)}`, P = `--project ${q(project)}`;
+  const name = path.basename(PROJECT) === 'film' ? path.basename(path.dirname(PROJECT)) : path.basename(PROJECT);
+  fs.writeFileSync(guide, `# Run the studio for ${name}
+
+This folder holds the ${name} films: \`scenes/\` (one folder per film), \`notes/\` (the editor's notes and "To check"
+lists) and \`out/\` (exports and rendered frames: keep it out of git). The studio itself is \`${studio}\`; its own guide is
+its \`RUN-STUDIO.md\`. Run every command below from \`${path.basename(here)}/\`.
+
+## Every time
+1. Start the studio for ${name}:
+   \`\`\`bash
+   ${npm} run dev -- ${P}
+   \`\`\`
+   It prints \`Motion Studio → http://localhost:5173/editor/ (project: …)\`. Another studio already on 5173? Put
+   \`PORT=5174 \` in front. In Claude Code you can also add this command as an entry in \`.claude/launch.json\`.
+2. Start the notes watcher, so **▶ Send to Claude** works: in a Claude Code session, say
+   > Start the notes watcher for ${name}.
+
+   Claude runs this in the background (it exits when you press Send; Claude works the notes and starts it again):
+   \`\`\`bash
+   node ${q(path.join(studio, 'tools/wait-for-notes.mjs'))} ${P}
+   \`\`\`
+3. Open the editor at the address it printed and pick a film at the top.
+
+## Other commands
+Every studio command takes the same \`${P}\`:
+\`\`\`bash
+${npm} run render -- ${id} --frames 0,100 ${P}
+${npm} run render -- ${id} ${P}
+${npm} run new-scene -- my-next-film ${P}
+\`\`\`
+Frames go to \`out/<film>-frames/\`, videos to \`out/\`, new films to \`scenes/\`. Check a watcher is running with
+\`pgrep -fl wait-for-notes\` (its command line names the project).
+`);
+  console.log(`${guide} written: how to run the studio and the notes watcher for this project`);
+}
