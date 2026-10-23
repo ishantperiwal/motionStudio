@@ -9,6 +9,24 @@
    npm install
    ```
 
+## Keep your films outside the studio (recommended)
+Your scenes, notes and exports can live in their own folder next to the studio, so the studio stays just the tool
+(safe to delete and clone again) and your films can go in your project's own git repository:
+```
+my-project/
+  motion-studio/   ← the studio, cloned as above
+  film/            ← your films: scenes/, notes/, out/
+```
+Tell the studio where the films are, once per copy:
+```bash
+cd motionStudio
+echo ../film > project.txt
+```
+(The path is relative to the studio folder.) Every command then uses that folder: the editor, exports, renders,
+new scenes and the notes watcher. Without `project.txt` everything stays inside the studio folder, as before.
+For a one-off you can also pass `--project <folder>` to any command (`npm run dev -- --project ../film`) or set
+`MOTION_PROJECT=<folder>`. When the studio starts it prints the project it's using.
+
 ## Every time
 1. Start it:
    ```bash
@@ -51,16 +69,19 @@ Good to know:
   `lsof -p <pid> | grep cwd` shows which folder a watcher belongs to.
 
 ## Export a video
-Press **⤓ Export MP4** in the editor. When it's done, press **Download**. Files are also saved in `out/`.
+Press **⤓ Export MP4** in the editor. When it's done, press **Download**. Files are also saved in `out/` (in your
+films folder, if you set one).
 
 ## New scene
 ```bash
 npm run new-scene -- my-film
 ```
-Then open it from the scene picker in the editor.
+It's created in `scenes/` (in your films folder, if you set one). Then open it from the scene picker in the editor.
 
 ## If something's off
 - **Editor won't load:** make sure `npm run dev` is still running in a terminal.
+- **A scene is missing from the picker:** check the project the studio printed when it started; the scene's folder
+  must be in that project's `scenes/`.
 - **"Port in use":** another copy is already running — use that one, or close it and start again.
 - **Send to Claude does nothing:** the watcher isn't running. Ask Claude to start the notes watcher; your
   waiting notes get picked up as soon as it does.

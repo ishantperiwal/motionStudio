@@ -1,15 +1,14 @@
 // npm run new-scene -- <id> [--size 1920x1080] [--fps 25]
-// Creates scenes/<id>/ with the import map, a stage, and a starter scene.js.
+// Creates scenes/<id>/ in the project (see server/project.mjs) with the import map, a stage, and a starter scene.js.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { ROOT, PROJECT } from '../server/project.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
 const id = argv[0];
 const opt = (k, d) => { const i = argv.indexOf('--' + k); return i < 0 ? d : argv[i + 1]; };
 if (!id || !/^[\w.-]+$/.test(id)) { console.log('usage: npm run new-scene -- <id> [--size 1920x1080] [--fps 25]'); process.exit(1); }
-const dir = path.join(ROOT, 'scenes', id);
+const dir = path.join(PROJECT, 'scenes', id);
 if (fs.existsSync(dir)) { console.error(`scenes/${id} already exists`); process.exit(1); }
 const [w, h] = opt('size', '1920x1080').split('x').map(Number);
 const fps = +opt('fps', 25);
@@ -60,4 +59,4 @@ s.beat('cam.push', { after: 'card.in', gap: 10, dur: 30, note: 'Push in' }, (b) 
 
 s.ready({ tail: 25 });
 `);
-console.log(`scenes/${id} created → http://localhost:5173/editor/#${id}@0`);
+console.log(`${PROJECT === ROOT ? `scenes/${id}` : dir} created → http://localhost:5173/editor/#${id}@0`);

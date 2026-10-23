@@ -1,6 +1,6 @@
 // Render a scene to frames / contact sheet / MP4.
 //
-//   npm run render -- my-film                       → out/my-film.mp4
+//   npm run render -- my-film                       → out/my-film.mp4 (the project's out/: see server/project.mjs)
 //   npm run render -- my-film --frames 0,100,200    → PNGs in out/my-film-frames/
 //   npm run render -- my-film --range 150-200 --png out/x
 //   npm run render -- my-film --sheet 0-250:10      → out/my-film-sheet-*.png (5x4 tiles)
@@ -13,7 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
-import { startServer, ROOT, CHROME } from '../server/dev.mjs';
+import { startServer, PROJECT, CHROME } from '../server/dev.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf('--' + k); return i < 0 ? d : argv[i + 1]; };
@@ -27,7 +27,7 @@ const dirArg = argv[0].replace(/^\/+|\/+$/g, ''), pageUrl = dirArg.includes('/')
 const workers = +opt('workers', Math.max(1, Math.min(16, os.cpus().length - 3)));
 const browserCount = Math.max(1, Math.min(workers, +opt('browsers', Math.min(4, Math.ceil(workers / 3)))));
 const blur = +opt('blur', 1), shutter = +opt('shutter', 0.5), scale = +opt('scale', 1);
-const outDir = path.join(ROOT, 'out');
+const outDir = path.join(PROJECT, 'out');
 fs.mkdirSync(outDir, { recursive: true });
 
 // Stop (from the editor) sends SIGTERM to this process group: remove the temporary frames and the half-written file, then exit
@@ -110,7 +110,7 @@ try {
     const vf = blur > 1 ? [`tmix=frames=${blur}`, `select='eq(mod(n\\,${blur})\\,${blur - 1})'`, `setpts=N/${fps}/TB`] : [];
     const size = opt('size', ''), sz = size.match(/^(\d+)x(\d+)$/);
     vf.push(sz ? `scale=${sz[1]}:${sz[2]}:flags=lanczos` : 'scale=trunc(iw/2)*2:trunc(ih/2)*2');   // exact size, or at least even sides (H.264/VP9 need them)
-    partialOut = path.resolve(ROOT, out);   // only from here on is the file ours to remove if stopped mid-encode
+    partialOut = path.resolve(out);   // only from here on is the file ours to remove if stopped mid-encode (a relative --out is from the cwd, as ffmpeg sees it)
     const codec = out.endsWith('.webm')   // WebM: VP9 in constant-quality mode (its CRF scale differs from H.264's: ~30 here ≈ H.264 18)
       ? ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuv420p', '-crf', opt('vp9crf', '30'), '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2']
       : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', opt('crf', '16'), '-preset', 'slow', '-movflags', '+faststart'];

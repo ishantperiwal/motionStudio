@@ -82,6 +82,8 @@ editor's Motion Studio menu). So far: the construct reveal (`runtime/kits/constr
 ## Scenes
 None ship with the studio. Create one with `npm run new-scene -- my-film`; each scene lives in
 `scenes/<id>/` and shows up in the editor's scene picker.
+Scenes, notes and exports can live in a project folder outside the studio (`echo ../film > project.txt`, or
+`--project <dir>` / `MOTION_PROJECT`): see [RUN-STUDIO.md](RUN-STUDIO.md#keep-your-films-outside-the-studio-recommended).
 
 ## Licenses
 GSAP 3.13 (with plugins) is free under GreenSock's own license — fine for internal use; check it before

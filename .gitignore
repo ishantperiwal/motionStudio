@@ -10,3 +10,6 @@ notes/_go.json
 # scenes are per-project work (like notes): they stay on your machine
 scenes/*
 !scenes/.gitkeep
+
+# this copy's project folder (see server/project.mjs): per machine
+project.txt

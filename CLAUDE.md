@@ -9,6 +9,8 @@ only staging and timing matter), read `skills/motion-principles/SKILL.md` and fo
 layouts first, then consistent easing, stagger, overlapping action and even timing between them.
 
 ## Layout
+A studio copy is the tool. A project's own work (its `scenes/`, `notes/` and `out/`) can live in a separate project
+folder; when none is set they live inside the studio folder, as below. See [Project folder](#project-folder).
 - `runtime/` — `studio.js` (master clock, beats, hit-testing), `ease.js` (bezier + tokens),
   `kits/` (camera, cursor, typing, svg, sketch, lottie, construct, shine, glass), `layers/` (pixi, three, p5). Shared by every scene.
 - `scenes/<id>/` — `index.html` (markup + import map), `scene.js` (beats), `style.css`, `assets/`.
@@ -22,6 +24,26 @@ layouts first, then consistent easing, stagger, overlapping action and even timi
 - `notes/<scene>/<id>.json` (+ `<id>.png` crop) — feedback queue.
 - `render/render.mjs`, `render/probe.mjs` — rendering and motion analysis.
 - `editor/` — the editor UI. `server/dev.mjs` — dev server (`npm run dev`, port 5173).
+- `server/project.mjs` — where the project folder is (the one setting below).
+
+## Project folder
+Recommended layout: one studio copy per project, next to a folder holding that project's films:
+```
+my-project/
+  motion-studio/   ← a clone of the studio (tool only; project.txt says ../film)
+  film/            ← scenes/, notes/, out/ (out/ is renders: keep it out of git)
+```
+Set the project folder, first one set wins:
+- `--project <dir>` on any command (`npm run dev -- --project ../film`, `npm run render -- <scene> --frames 0 --project ../film`);
+- `MOTION_PROJECT=<dir>` in the environment;
+- `project.txt` in the studio folder: one line, the project folder relative to the studio (gitignored, per copy).
+  This is the set-and-forget option: every command (dev, render, probe, new-scene, wait-for-notes) then uses it.
+
+Unset, the project is the studio folder itself. A relative `--project` / `MOTION_PROJECT` is from where you typed the
+command. The dev server serves `/scenes/`, `/notes/` and `/out/` from the project and everything else (`/runtime/`,
+`/vendor/`, `/editor/`, `/themes/`, `/techniques/`, `/tokens/`) from the studio, so scenes keep using absolute
+`/runtime/` and `/vendor/` paths and relative paths for their own files. In this file, `scenes/`, `notes/` and `out/`
+mean the project's. Check which project a running studio uses in its startup line (`… (project: <dir>)`).
 
 ## Scene contract (keep it deterministic)
 - All animation goes through `s.beat(name, opts, (b) => …)` using `b.fromTo`, `b.each`, `b.set`.
@@ -69,7 +91,8 @@ layouts first, then consistent easing, stagger, overlapping action and even timi
    frame/range/region from the note) saying what changed and where to look, and tell the person in chat. They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
    with `followUp` set to the item's text (treat it as feedback on that change).
    If you could not do a note, leave it and put your question in `"reply"` instead.
-Whenever you start the studio (`npm run dev`), also start the watcher for this folder (see RUN-STUDIO.md).
+Whenever you start the studio (`npm run dev`), also start the watcher for the same project (see RUN-STUDIO.md):
+pass it the same `--project` as the studio, unless `project.txt` sets it.
 While a session is working notes, keep `node tools/wait-for-notes.mjs` running in the background: it exits
 when the editor's "Send to Claude" button is pressed — then work the notes and start it again.
 The dev server live-reloads the editor when scene files or notes change.
@@ -94,7 +117,8 @@ behind it → `liquid-glass`), and use its kit rather than rebuilding the move. 
 `techniques/REGISTERING.md`.
 
 ## Rendering
-`npm run render -- <scene>` → `out/<scene>.mp4`. Options: `--range a-b`, `--blur 8` (sub-frame motion
+`npm run render -- <scene>` → `out/<scene>.mp4` (the project's `out/`). Options: `--range a-b`, `--blur 8` (sub-frame motion
 blur), `--shutter 0.5`, `--scale 2` (supersampled), `--workers N`, `--crf 16`. `--out file.webm` encodes WebM (VP9, ~25% smaller;
 `--vp9crf 30`); the editor's Export has an MP4 / WebM picker. A folder path in place of the scene id
-renders a scene page kept elsewhere (`npm run render -- techniques/<id>/demo …`).
+renders a scene page kept elsewhere (`npm run render -- techniques/<id>/demo …`). A relative `--out` / `--png` is from the
+folder the renderer runs in (the studio, under npm).

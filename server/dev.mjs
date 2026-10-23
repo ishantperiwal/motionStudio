@@ -4,8 +4,9 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { ROOT, PROJECT } from './project.mjs';
 
 // The browser for capturing frames: Playwright's own Chromium (npx playwright install chromium), never the user's Google
 // Chrome app. A hidden instance of the real Chrome app takes its place on macOS: with the user's Chrome closed, clicking
@@ -13,7 +14,7 @@ import { spawn, spawnSync } from 'node:child_process';
 // Its default GPU memory limit is too small for heavy 3D scenes: past it, frames quietly skip drawing parts (layers come
 // out blank) even in screenshots. A higher limit keeps every frame complete.
 export const CHROME = { args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'] };
-export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export { ROOT, PROJECT };   // the studio (tool) and the project (its scenes/, notes/, out/): see project.mjs
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
@@ -29,8 +30,9 @@ const readBody = (req) => new Promise((ok, bad) => { let d = ''; req.on('data', 
 const safeId = (s) => /^[\w.-]+$/.test(s || '') ? s : null;
 
 async function listScenes() {
-  const dir = path.join(ROOT, 'scenes');
+  const dir = path.join(PROJECT, 'scenes');
   const out = [];
+  if (!fs.existsSync(dir)) return out;
   for (const d of await fsp.readdir(dir, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
     const html = path.join(dir, d.name, 'index.html');
@@ -65,7 +67,7 @@ async function shot(base, note) {
       x: Math.max(0, r.x - pad), y: Math.max(0, r.y - pad),
       width: Math.min(width, r.x + r.w + pad) - Math.max(0, r.x - pad), height: Math.min(height, r.y + r.h + pad) - Math.max(0, r.y - pad),
     } : undefined;
-    await page.screenshot({ path: path.join(ROOT, 'notes', note.scene, `${note.id}.png`), clip });
+    await page.screenshot({ path: path.join(PROJECT, 'notes', note.scene, `${note.id}.png`), clip });
     await page.close();
   } catch (e) { console.warn('[notes] screenshot failed:', e.message); }
 }
@@ -77,7 +79,7 @@ async function shot(base, note) {
 //   · all scenes together use at most PREVIEW.diskMB on disk (oldest deleted first); frames never sit in memory
 //   · the render pages close after PREVIEW.idleMin minutes without use
 export const PREVIEW = { pages: 3, windowSec: 20, diskMB: 300, idleMin: 5 };
-const PREVIEW_DIR = path.join(ROOT, 'out', '.preview');
+const PREVIEW_DIR = path.join(PROJECT, 'out', '.preview');
 let sceneVersion = 0;   // bumped by the file watcher; stale frames are dropped on the next request
 const previews = {};    // `${scene}@${scale}` → { ver, scale, dir, pages, ready, queue, have: Map(f → bytes), inflight, focus, last, fps, frames }
 const disk = new Map(); // file → { bytes, t } across all scenes, for the disk cap
@@ -212,7 +214,7 @@ const exports_ = {}, exportProcs = {};
 // size calibration for export estimates: the scene's latest finished export (bytes, dimensions, frame count via ffprobe)
 const calibCache = {};
 function exportCalib(scene) {
-  const dir = path.join(ROOT, 'out');
+  const dir = path.join(PROJECT, 'out');
   let files = [];
   try { files = fs.readdirSync(dir).filter((f) => new RegExp(`^${scene}-\\d+(-(\\d+pct|\\d+x\\d+))?\\.(mp4|webm)$`).test(f)); } catch { return null; }
   const latest = files.map((f) => ({ f, st: fs.statSync(path.join(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs)[0];
@@ -269,7 +271,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       let m;
       if (p === '/api/notes' && req.method === 'GET') {
         const scene = safeId(url.searchParams.get('scene'));
-        const dir = path.join(ROOT, 'notes', scene || '_');
+        const dir = path.join(PROJECT, 'notes', scene || '_');
         const files = fs.existsSync(dir) ? (await fsp.readdir(dir)).filter((f) => f.endsWith('.json') && !f.startsWith('_')) : [];
         const notes = await Promise.all(files.map((f) => readJSON(path.join(dir, f), null)));
         return send(res, 200, notes.filter(Boolean).sort((a, b) => a.created.localeCompare(b.created)));
@@ -278,15 +280,15 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/api/go' && req.method === 'POST') {
         const { scene } = await readBody(req);
         if (!safeId(scene)) return send(res, 400, { error: 'scene required' });
-        await writeJSON(path.join(ROOT, 'notes', '_go.json'), { scene, at: new Date().toISOString() });
+        await writeJSON(path.join(PROJECT, 'notes', '_go.json'), { scene, at: new Date().toISOString() });
         return send(res, 200, { ok: true });
       }
-      if (p === '/api/go' && req.method === 'GET') return send(res, 200, { pending: fs.existsSync(path.join(ROOT, 'notes', '_go.json')) });
+      if (p === '/api/go' && req.method === 'GET') return send(res, 200, { pending: fs.existsSync(path.join(PROJECT, 'notes', '_go.json')) });
       // the editor's scrub log (diagnostics): one JSON line per ruler drag, in out/.diag/scrub.log
       if (p === '/api/diag' && req.method === 'POST') {
         const d = await readBody(req);
-        await fsp.mkdir(path.join(ROOT, 'out', '.diag'), { recursive: true });
-        await fsp.appendFile(path.join(ROOT, 'out', '.diag', 'scrub.log'), JSON.stringify(d) + '\n');
+        await fsp.mkdir(path.join(PROJECT, 'out', '.diag'), { recursive: true });
+        await fsp.appendFile(path.join(PROJECT, 'out', '.diag', 'scrub.log'), JSON.stringify(d) + '\n');
         return send(res, 200, { ok: true });
       }
 
@@ -304,15 +306,15 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
           const file = `out/${scene}-${stamp}${scale < 1 ? `-${size || `${Math.round(scale * 100)}pct`}` : ''}.${ext}`;
           const j = exports_[scene] = { state: 'running', done: 0, total: 0, file, scale, started: Date.now() };
           // its own process group, so Stop can end the renderer together with its browsers and ffmpeg
-          const child = spawn(process.execPath, ['render/render.mjs', scene, '--blur', '6', '--crf', '18', '--scale', String(scale), ...(size && scale < 1 ? ['--size', size] : []), '--out', file], { cwd: ROOT, detached: true });
+          const child = spawn(process.execPath, ['render/render.mjs', scene, '--blur', '6', '--crf', '18', '--scale', String(scale), ...(size && scale < 1 ? ['--size', size] : []), '--out', path.join(PROJECT, file)], { cwd: ROOT, detached: true, env: { ...process.env, MOTION_PROJECT: PROJECT } });
           exportProcs[scene] = child;
           const onData = (d) => { const m = String(d).match(/(\d+)\/(\d+)(?!.*\d+\/\d+)/s); if (m) { j.done = +m[1]; j.total = +m[2]; } };
           child.stdout.on('data', onData); child.stderr.on('data', (d) => { j.log = String(d).slice(-400); });
           child.on('close', (code) => {
             delete exportProcs[scene];
-            if (j.state === 'stopping') { j.state = 'stopped'; fs.rmSync(path.join(ROOT, file), { force: true }); return; }
+            if (j.state === 'stopping') { j.state = 'stopped'; fs.rmSync(path.join(PROJECT, file), { force: true }); return; }
             j.state = code === 0 ? 'done' : 'failed';
-            if (code === 0) { try { j.size = fs.statSync(path.join(ROOT, file)).size; } catch {} }
+            if (code === 0) { try { j.size = fs.statSync(path.join(PROJECT, file)).size; } catch {} }
           });
         }
         if (req.method === 'DELETE' && job && job.state === 'running') {   // Stop: end the whole export process group
@@ -328,7 +330,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/api/checklist') {
         const scene = safeId(url.searchParams.get('scene'));
         if (!scene) return send(res, 400, { error: 'scene required' });
-        const file = path.join(ROOT, 'notes', scene, '_checklist.json');
+        const file = path.join(PROJECT, 'notes', scene, '_checklist.json');
         const list = await readJSON(file, { items: [] });
         if (req.method === 'DELETE') {
           const id = url.searchParams.get('id');
@@ -343,13 +345,13 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         const created = new Date().toISOString();
         const slug = (n.text || 'note').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32).replace(/^-|-$/g, '');
         const note = { id: `${created.replace(/[:.]/g, '-').slice(0, 19)}-${slug}`, created, ...n, reply: null };
-        await writeJSON(path.join(ROOT, 'notes', note.scene, `${note.id}.json`), note);
+        await writeJSON(path.join(PROJECT, 'notes', note.scene, `${note.id}.json`), note);
         shot(base, note);   // async; the crop appears beside the note
         return send(res, 200, note);
       }
       // Reference images pasted into a note (⌘V): saved beside it as <id>.ref-N.<ext> and listed in note.refs
       if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)\/refs(?:\/([\w.-]+))?$/))) {
-        const file = path.join(ROOT, 'notes', m[1], `${m[2]}.json`);
+        const file = path.join(PROJECT, 'notes', m[1], `${m[2]}.json`);
         const note = await readJSON(file, null);
         if (!note) return send(res, 404, { error: 'no such note' });
         note.refs = note.refs || [];
@@ -361,23 +363,23 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
           let k = note.refs.length + 1;
           while (note.refs.some((r) => r.startsWith(`${m[2]}.ref-${k}.`))) k++;
           const name = `${m[2]}.ref-${k}.${ext}`;
-          await fsp.writeFile(path.join(ROOT, 'notes', m[1], name), Buffer.from(mm[2], 'base64'));
+          await fsp.writeFile(path.join(PROJECT, 'notes', m[1], name), Buffer.from(mm[2], 'base64'));
           note.refs.push(name);
         } else if (req.method === 'DELETE' && safeId(m[3])) {
-          await fsp.rm(path.join(ROOT, 'notes', m[1], m[3]), { force: true });
+          await fsp.rm(path.join(PROJECT, 'notes', m[1], m[3]), { force: true });
           note.refs = note.refs.filter((r) => r !== m[3]);
         }
         await writeJSON(file, note);
         return send(res, 200, note);
       }
       if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
-        const note = await readJSON(path.join(ROOT, 'notes', m[1], `${m[2]}.json`), null);
-        for (const r of note?.refs || []) if (safeId(r)) await fsp.rm(path.join(ROOT, 'notes', m[1], r), { force: true });
-        for (const ext of ['.json', '.png']) await fsp.rm(path.join(ROOT, 'notes', m[1], m[2] + ext), { force: true });
+        const note = await readJSON(path.join(PROJECT, 'notes', m[1], `${m[2]}.json`), null);
+        for (const r of note?.refs || []) if (safeId(r)) await fsp.rm(path.join(PROJECT, 'notes', m[1], r), { force: true });
+        for (const ext of ['.json', '.png']) await fsp.rm(path.join(PROJECT, 'notes', m[1], m[2] + ext), { force: true });
         return send(res, 200, { ok: true });
       }
       if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)$/)) && req.method === 'PATCH') {
-        const file = path.join(ROOT, 'notes', m[1], `${m[2]}.json`);
+        const file = path.join(PROJECT, 'notes', m[1], `${m[2]}.json`);
         const note = await readJSON(file, null);
         if (!note) return send(res, 404, { error: 'no such note' });
         const before = JSON.stringify(note.region ?? null);
@@ -389,7 +391,9 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
 
       // ---------- static ----------
       if (p === '/') { res.writeHead(302, { Location: '/editor/' }); return res.end(); }
-      let file = p.startsWith('/vendor/') ? inside(path.join(ROOT, 'node_modules'), p.slice(7)) : inside(ROOT, p);
+      // the project's own folders come from the project; everything else (editor, runtime, themes, …) from the studio
+      let file = p.startsWith('/vendor/') ? inside(path.join(ROOT, 'node_modules'), p.slice(7))
+        : inside(/^\/(scenes|notes|out)(\/|$)/.test(p) ? PROJECT : ROOT, p);
       if (!file) return send(res, 403, 'forbidden', 'text/plain');
       if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
       if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
@@ -411,7 +415,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
   if (watch) {
     let timer = null, changed = new Set();
     for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes']) {
-      const abs = path.join(ROOT, dir);
+      const abs = path.join(dir === 'scenes' || dir === 'notes' ? PROJECT : ROOT, dir);
       fs.mkdirSync(abs, { recursive: true });
       fs.watch(abs, { recursive: true }, (_, f) => {
         if (!f || /(^|\/)\.|~$/.test(f)) return;
@@ -424,7 +428,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
   }
 
   return new Promise((ok) => server.listen(port, () => {
-    if (!quiet) console.log(`Motion Studio → http://localhost:${server.address().port}/editor/`);
+    if (!quiet) console.log(`Motion Studio → http://localhost:${server.address().port}/editor/${PROJECT !== ROOT ? `   (project: ${PROJECT})` : ''}`);
     ok(server);
   }));
 }
