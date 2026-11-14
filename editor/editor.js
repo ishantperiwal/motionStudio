@@ -55,15 +55,24 @@ addEventListener('pointerdown', (e) => {   // a press over the ruler that the ru
 }, true);
 
 // ------------------------------------------------------------------ scene
+// ?embed: this editor runs inside the References panel, on one reference. The main window only ever shows films.
+const EMBED = new URLSearchParams(location.search).has('embed');
+const closePanel = () => window.parent.postMessage({ type: 'ms:close-refs' }, location.origin);
 async function init() {
   st.scenes = await (await fetch('/api/scenes')).json();
   const pick = $('#scenePick');
-  st.scenes.forEach((s) => pick.append(h('option', { value: s.id }, s.title)));
   const [hs, hf] = decodeURIComponent(location.hash.slice(1)).split('@');
-  st.scene = st.scenes.find((s) => s.id === hs)?.id || st.scenes[0]?.id;
+  const allowed = (s) => (EMBED ? s.kind === 'reference' : s.kind !== 'reference');
+  st.scene = st.scenes.find((s) => s.id === hs && allowed(s))?.id || (EMBED ? null : st.scenes.find(allowed)?.id);
+  if (EMBED) {
+    document.body.classList.add('embed');
+    $('#top').prepend(h('a', { class: 'back', href: '/editor/references.html?embed', title: 'Back to all references' }, '← References'),
+      h('span', { class: 'ref-name' }, st.scenes.find((s) => s.id === st.scene)?.title || 'Reference'));
+    $('#top').append(h('button', { class: 'close-panel', title: 'Close (Esc)', onclick: closePanel }, '✕'));
+  }
   st.frame = +hf || 0;
-  pick.value = st.scene;
-  pick.onchange = () => { Object.assign(st, { scene: pick.value, frame: 0, range: null, sel: null, pending: null }); loadScene(); };
+  fillPicker();
+  pick.onchange = () => openScene(pick.value);
   loadScene();
   const es = new EventSource('/api/events');
   es.onmessage = (e) => {
@@ -72,7 +81,22 @@ async function init() {
     if (!st.scene && paths.some((p) => p.startsWith('scenes/'))) return location.reload();   // first scene created
     if (paths.some((p) => p.startsWith(`scenes/${st.scene}/`) || p.startsWith('runtime/') || p.startsWith('tokens/'))) reloadScene();
     if (paths.some((p) => p.startsWith(`notes/${st.scene}/`))) loadNotes();
+    if (st.scene?.startsWith('ref.') && paths.some((p) => p.startsWith(`references/${st.scene.slice(4)}/`))) loadNotes();   // a finding written
   };
+}
+
+// The picker lists films and animatics only. References open in the References panel, in their own editor (?embed).
+function fillPicker() {
+  const pick = $('#scenePick');
+  pick.replaceChildren(...st.scenes.filter((s) => s.kind !== 'reference').map((s) => h('option', { value: s.id }, s.title)));
+  pick.value = st.scene;
+}
+async function openScene(id, frame = 0) {
+  if (!st.scenes.find((s) => s.id === id)) st.scenes = await (await fetch('/api/scenes')).json();   // e.g. a reference added since
+  if (!st.scenes.find((s) => s.id === id)) return;
+  Object.assign(st, { scene: id, frame, range: null, sel: null, selF: null, pending: null, findings: [] });
+  fillPicker();
+  loadScene();
 }
 
 // A scene edit reloads the scene without interrupting you: the new version loads in a hidden iframe while the current
@@ -346,13 +370,24 @@ function buildTimeline() {
   const notes = [...st.notes].sort((a, b) => (a.range?.[0] ?? a.frame) - (b.range?.[0] ?? b.frame));
   if (st.pending?.range) notes.unshift(st.pending);
   for (const n of notes) {
-    const bar = h('div', { class: `nbar ${n.range ? 'timed' : 'point'}`, title: n.text },
+    const proc = processing(n);
+    const bar = h('div', { class: `nbar ${n.range ? 'timed' : 'point'}${proc ? ' processing' : ''}`, title: proc ? `With Claude: ${n.text}` : n.text },
       n.range ? h('div', { class: 'handle l' }) : null, n.range ? h('div', { class: 'handle r' }) : null);
     const lane = h('div', { class: `lane ${st.sel === n.id || n === st.pending ? 'sel' : ''}` },
-      h('div', { class: 'name', title: n.text, onclick: () => n !== st.pending && selectNote(n) }, n.reply ? h('span', { class: 'replied', title: 'Claude replied' }, '↩') : null, n.text || 'New note…'),
+      h('div', { class: 'name', title: n.text, onclick: () => n !== st.pending && selectNote(n) }, n.reply ? h('span', { class: 'replied', title: 'Claude replied' }, '↩') : null, proc ? h('span', { class: 'proc', title: 'With Claude' }) : null, n.text || 'New note…'),
       bar);
     lane._note = n;
     bar.addEventListener('pointerdown', (e) => dragNote(e, n, bar));
+    lanes.append(lane);
+  }
+  // a reference's findings: the moments Claude has studied (click for the frames, motion and style)
+  for (const f of st.findings || []) {
+    const bar = h('div', { class: `nbar fbar ${f.range ? 'timed' : 'point'}`, title: f.summary || f.name });
+    const lane = h('div', { class: `lane finding ${st.selF === f.id ? 'sel' : ''}` },
+      h('div', { class: 'name', title: f.summary || f.name, onclick: () => selectFinding(f) }, h('span', { class: 'fmark' }, '◆'), f.name || 'Finding'),
+      bar);
+    lane._note = f; lane._finding = true;
+    bar.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectFinding(f); });
     lanes.append(lane);
   }
   layoutTimeline();
@@ -595,6 +630,8 @@ function drawOverlay() {
   }
   const shown = st.pending || st.notes.find((x) => x.id === st.sel);
   if (shown?.region) overlay.append(editBox(shown));
+  const fnd = !shown && st.selF && st.findings?.find((f) => f.id === st.selF);
+  if (fnd?.region) box(fnd.region, 'saved found', 'studied');
 }
 
 // The open note's box can be adjusted: drag inside it to move, drag the corner grip to resize.
@@ -656,14 +693,17 @@ function setComment(on) {
 // ------------------------------------------------------------------ notes
 async function loadNotes() {
   if (!st.scene) return;
-  const [fresh, check] = await Promise.all([
+  const [fresh, check, findings] = await Promise.all([
     fetch(`/api/notes?scene=${st.scene}`).then((r) => r.json()),
     fetch(`/api/checklist?scene=${st.scene}`).then((r) => r.json()).catch(() => ({ items: [] })),
+    st.scene.startsWith('ref.') ? fetch(`/api/findings?ref=${st.scene.slice(4)}`).then((r) => r.json()).catch(() => []) : [],
   ]);
   st.checklist = check.items || [];
+  st.findings = findings;
+  if (st.selF && !findings.find((f) => f.id === st.selF)) st.selF = null;
   // keep the open note's object (it may hold typing that hasn't round-tripped yet)
   const open = st.notes.find((x) => x.id && x.id === st.sel);
-  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, region: open.region, elements: open.elements, beats: open.beats }) : f));   // the open note's local edits (text, box) win
+  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, region: open.region, elements: open.elements, beats: open.beats, useRefs: open.useRefs }) : f));   // the open note's local edits (text, box) win
   // the open note was resolved elsewhere (e.g. by Claude): drop it and the time range it had selected,
   // so a spot note drawn next doesn't inherit that range and turn into a span note
   if (st.sel && !st.notes.find((n) => n.id === st.sel)) { st.sel = null; setRange(null); }
@@ -672,6 +712,8 @@ async function loadNotes() {
 
 }
 const typing = () => document.activeElement?.closest?.('#panel');
+// sent with "Send to Claude" and not finished yet (Claude deletes a note when it's done, or replies to it)
+const processing = (n) => !!(n?.sentAt && !n.reply);
 
 function startNote({ region = null }) {
   const fi = Math.floor(st.frame), range = region && st.rangeAuto ? null : st.range;   // a spot never inherits a range the editor selected for you
@@ -680,7 +722,7 @@ function startNote({ region = null }) {
     : { beats: range ? st.beats.filter((b) => b.f1 >= range[0] && b.f0 <= range[1] && b.f1 > b.f0).map((b) => ({ name: b.name, f0: b.f0, f1: b.f1 })) : [], elements: [] };
   let elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
   st.pending = { text: '', frame: fi, range, region, beats: hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 })), elements, curve: null };
-  st.sel = null; st.curveOpen = false; st.editing = true; st.focusText = true;
+  st.sel = null; st.selF = null; st.curveOpen = false; st.editing = true; st.focusText = true;
   setComment(false);
   buildTimeline(); renderPanel(); drawOverlay();
 }
@@ -689,6 +731,7 @@ function startNote({ region = null }) {
 // the ruler, or a blank part of the timeline — deselects the note. Unsaved typing is saved first.
 function deselect() {
   if (st.rec) return;                         // recording a span: keep the new note
+  if (st.selF && !st.pending && !st.sel) { st.selF = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); return; }
   if (!st.pending && !st.sel) return;
   if (st.pending?.text?.trim()) persist(st.pending);
   else if (st.sel) { const n = st.notes.find((x) => x.id === st.sel); if (n) { clearTimeout(saveTimer); persist(n); } }
@@ -705,12 +748,21 @@ lanes.addEventListener('pointerdown', (e) => { if (!e.target.closest('.nbar, .na
 
 function selectNote(n) {
   if (st.pending && st.pending.text?.trim()) persist(st.pending);
-  st.pending = null; st.sel = n.id; st.curveOpen = false; st.editing = false;
+  st.pending = null; st.sel = n.id; st.selF = null; st.curveOpen = false; st.editing = false; st.refPick = false;
   st.areaSel = false;                  // picking the note (timeline bar) selects the note, not its area
   setPlaying(false);
   seek(n.frame, true);
   setRange(n.range || null);
-  for (const lane of lanes.children) lane.classList.toggle('sel', lane._note?.id === n.id);
+  for (const lane of lanes.children) lane.classList.toggle('sel', !lane._finding && lane._note?.id === n.id);
+  renderPanel(); drawOverlay();
+}
+function selectFinding(f) {
+  if (st.pending && st.pending.text?.trim()) persist(st.pending);
+  st.pending = null; st.sel = null; st.selF = f.id; st.editing = false; st.fOpen = null;
+  setPlaying(false);
+  seek(f.range?.[0] ?? f.frame ?? 0, true);
+  setRange(f.range || null);
+  for (const lane of lanes.children) lane.classList.toggle('sel', !!lane._finding && lane._note?.id === f.id);
   renderPanel(); drawOverlay();
 }
 
@@ -731,7 +783,7 @@ function persist(n) {
       if (!st.notes.includes(n)) st.notes.push(n);
       buildTimeline();
     } else {
-      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region }));
+      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [] }));
       const lane = [...lanes.children].find((l) => l._note === n || l._note?.id === n.id);
       if (lane) lane.querySelector('.name').lastChild.textContent = n.text;
     }
@@ -742,14 +794,6 @@ function save(n, patch) {
   Object.assign(n, patch);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => persist(n), 300);
-}
-async function commit(n) {          // ✓ — save now and show the saved view
-  clearTimeout(saveTimer);
-  delete n._fresh;
-  if (!n.text?.trim()) return;
-  st.editing = false;
-  await persist(n);
-  renderPanel(); drawOverlay();
 }
 async function removeNote(n) {      // delete button / ⌫ — removes the note
   clearTimeout(saveTimer);
@@ -773,8 +817,9 @@ async function dismissNote() {
   if (dismissDrag) { dismissDrag(); return; }
   if (st.rec) { st.rec = null; $('#rec').classList.remove('on'); $('#rec').textContent = '● REC'; }
   const open = st.notes.find((x) => x.id === st.sel);
-  const n = st.pending || (open?._fresh ? open : null);   // a brand-new note (even if autosave already created it) is discarded
-  if (n) { clearTimeout(saveTimer); await queue; if (n.id) { await removeNote(n); return; } st.pending = null; }
+  const n = st.pending || (open?._fresh ? open : null);   // a brand-new note
+  if (n && n.text?.trim()) { clearTimeout(saveTimer); delete n._fresh; await persist(n); st.pending = null; st.sel = null; }   // has text: kept as a draft
+  else if (n) { clearTimeout(saveTimer); await queue; if (n.id) { await removeNote(n); return; } st.pending = null; }   // empty: thrown away
   else if (st.sel) { clearTimeout(saveTimer); await queue; st.sel = null; }
   else if (st.comment) setComment(false);
   st.editing = false; setRange(null);
@@ -792,6 +837,7 @@ function noteContext(n) {
     `Note: ${n.text}`,
     n.followUp ? `Follow-up on Claude's change: ${n.followUp}` : null,
     n.curve ? `Wanted easing: cubic-bezier(${n.curve.join(', ')})` : null,
+    n.useRefs?.length ? `Use these reference findings: ${n.useRefs.map((u) => `ref:${u.ref}/${u.slug || u.id} (${u.name})`).join(', ')}` : null,
     n.region ? `Region (stage px): x ${n.region.x}, y ${n.region.y}, ${n.region.w}×${n.region.h}` : null,
     n.elements?.length ? `In the box (best match first): ${n.elements.map((e) => e.name + (e.text && e.text !== e.name ? ` “${e.text}”` : '')).join(', ')}` : null,
     n.beats?.length ? `Beats: ${n.beats.map((b) => `${b.name} (${b.f0}→${b.f1})`).join(', ')}` : null,
@@ -842,6 +888,8 @@ function renderPanel() {
   if (!(st.pending || st.notes.find((x) => x.id === st.sel))?.region) st.areaSel = false;
   panel.innerHTML = '';
   const n = st.pending || st.notes.find((x) => x.id === st.sel);
+  const fnd = !n && st.selF && st.findings?.find((f) => f.id === st.selF);
+  if (fnd) return renderFinding(fnd);
   if (!n) {
     if (st.checklist?.length) {
       const dropItem = async (it) => {
@@ -898,9 +946,10 @@ function renderPanel() {
   const head = h('div', { class: 'head' },
     h('span', { class: 'where' }, where(n)),
     h('div', { class: 'head-btns' },
-      editing
-        ? h('button', { class: 'resolve', title: 'Save note (⌘↵)', onclick: () => commit(n) }, '✓')
-        : h('span', { class: 'saved' }, 'Saved'),
+      processing(n)
+        ? h('span', { class: 'saved proc', title: 'Sent to Claude; it disappears when Claude has worked it' }, 'With Claude')
+        : [n.id && n.text?.trim() && !editing ? h('span', { class: 'saved draft', title: 'Saved, not sent yet' }, 'Draft') : null,
+           h('button', { class: 'resolve send', title: 'Send to Claude (⌘↵). Sends this and any other unsent notes on this scene', onclick: () => sendNote(n) }, '↑')],
       del));
   panel.append(head);
 
@@ -908,11 +957,11 @@ function renderPanel() {
   if (n.elements?.length) panel.append(h('div', { class: 'target' }, h('span', { class: 'muted' }, 'In the box: '), n.elements.slice(0, 3).map((e) => e.name).join(' · ')));
   if (editing) {
     const ta = h('textarea', {
-      value: n.text || '', placeholder: 'What should change here?  (⌘V pastes a reference image)',
+      value: n.text || '', placeholder: st.scene?.startsWith('ref.') ? 'What do you like about this moment?' : 'What should change here?  (⌘V pastes a reference image)',
       oninput: (e) => save(n, { text: e.target.value }),
       onkeydown: (e) => {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(n); }
-        if (e.key === 'Escape') { e.preventDefault(); n === st.pending || n._fresh ? dismissNote() : commit(n).then(() => dismissNote()); }
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendNote(n); }   // Enter alone is a new line
+        if (e.key === 'Escape') { e.preventDefault(); dismissNote(); }   // closes; a note with text stays as a draft
       },
     });
     panel.append(ta);
@@ -927,6 +976,9 @@ function renderPanel() {
     return h('div', { class: 'ref' }, h('img', { src: r.src, title: 'Reference image (pasted with ⌘V)' }), x);
   })));
 
+  const rerender = () => { const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
+  const isRef = st.scene?.startsWith('ref.');
+  const setUse = (list) => { save(n, { useRefs: list }); rerender(); };
   const setCurve = (c) => { save(n, { curve: c }); st.curveOpen = !!c; const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
   panel.append(h('div', { class: 'cues' },
     n.curve
@@ -937,7 +989,21 @@ function renderPanel() {
       ? (n.region
           ? h('button', { class: 'cue', title: 'Remove the marked area', onclick: () => removeArea(n) }, '✕ area')
           : h('button', { class: `cue add ${st.comment ? 'on' : ''}`, title: 'Draw a box on the frame to mark an area for this span (S)', onclick: () => setComment(!st.comment) }, st.comment ? 'draw the area…' : '+ area'))
-      : null));
+      : null,
+    // a film note can point at findings from references: Claude applies their motion and/or style here
+    ...(isRef ? [] : (n.useRefs || []).map((u) => h('button', { class: 'cue refc', title: `${u.summary || u.name} · click to open the reference`, onclick: () => window.open(`/editor/#${u.scene}@${u.frame ?? 0}`, '_blank') },
+      h('span', { class: 'fmark' }, '◆'), u.name,
+      h('span', { class: 'x', title: 'Remove', onclick: (e) => { e.stopPropagation(); setUse((n.useRefs || []).filter((x) => x !== u)); } }, '×')))),
+    isRef ? null : h('button', { class: `cue add ${st.refPick ? 'on' : ''}`, title: 'Use a finding from a reference: its motion and/or style', onclick: async () => { st.refPick = !st.refPick; if (st.refPick) st.allFindings = await (await fetch('/api/findings')).json(); rerender(); } }, '+ reference')));
+  if (!isRef && st.refPick) {
+    const list = (st.allFindings || []).filter((f) => !(n.useRefs || []).some((u) => u.ref === f.ref && u.id === f.id));
+    panel.append(h('div', { class: 'f-pick' }, list.length ? list.map((f) => h('button', { class: 'f-item', onclick: () => {
+      st.refPick = false;
+      setUse([...(n.useRefs || []), { ref: f.ref, id: f.id, slug: f.slug || f.id, name: f.name, summary: f.summary, scene: f.scene, frame: f.range?.[0] ?? f.frame, captures: f.captures }]);
+    } }, f.keyFrames?.[0] ? h('img', { src: `${f.base}${f.keyFrames[0].file}?v=${f.v}` }) : h('span', { class: 'ph' }),
+      h('span', { class: 'tx' }, h('b', {}, f.name), h('span', { class: 'muted' }, `${f.refName} · ${(f.captures || []).join(' + ')}`), f.summary ? h('span', {}, f.summary) : null)))
+      : h('div', { class: 'muted' }, 'No findings yet. Add a reference (Motion Studio menu → References), note a moment on it and Send to Claude.')));
+  }
   if (n.curve && st.curveOpen) {
     const tokens = Object.entries(st.S.tokens?.ease || {});
     panel.append(h('div', { class: 'curve' },
@@ -946,6 +1012,94 @@ function renderPanel() {
         h('button', { class: 'ghost', onclick: () => setCurve(null) }, 'remove'))));
   }
   if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, 'Claude'), n.reply));
+}
+
+// A finding (a studied moment of a reference), at a glance: what it is, a frame sequence you scrub with the pointer,
+// the motion as numbers and a curve, the style as swatches and type samples. The long notes and the code wait behind
+// the "Text spec" and "Code" chips.
+const FONTS = { fraunces: 'Fraunces', 'instrument-sans': 'Instrument Sans', inter: 'Inter', manrope: 'Manrope', 'bricolage-grotesque': 'Bricolage Grotesque', unbounded: 'Unbounded', 'big-shoulders-display': 'Big Shoulders Display' };
+const fontLoads = {};
+function sampleFont(name) {   // a font the studio ships, loaded for the "Aa" sample; else null
+  const slug = Object.keys(FONTS).find((k) => FONTS[k].toLowerCase() === String(name || '').toLowerCase());
+  if (!slug) return null;
+  fontLoads[slug] ||= new FontFace(`ms-${slug}`, `url(/vendor/@fontsource/${slug}/files/${slug}-latin-400-normal.woff2)`).load().then((ff) => document.fonts.add(ff)).catch(() => {});
+  return `ms-${slug}`;
+}
+function frameSeq(f) {
+  const n = f.frames || 0, fps = f.fps || st.fps, pad = (i) => String(i).padStart(4, '0');
+  const src = (i) => `${f.base}frames/f${pad(i)}.jpg?v=${f.v}`;
+  const keys = f.keyFrames || [];
+  const img = h('img', { src: n ? src(1) : (keys[0] ? `${f.base}${keys[0].file}?v=${f.v}` : ''), alt: '' });
+  const fill = h('i', { class: 'fill' }), cap = h('span', { class: 'cap' });
+  const bar = h('div', { class: 'bar' }, fill, ...keys.filter((k) => k.frame && n).map((k) => h('b', { title: k.label, style: { left: `${((k.frame - 1) / Math.max(1, n - 1)) * 100}%` } })));
+  const show = (i) => {
+    img.src = src(i);
+    fill.style.width = `${((i - 1) / Math.max(1, n - 1)) * 100}%`;
+    const k = keys.find((x) => Math.abs((x.frame || -9) - i) <= 1);
+    cap.textContent = `f${i} · ${((i - 1) / fps).toFixed(2)}s${k ? ` · ${k.label}` : ''}`;
+  };
+  let warm = false;
+  const view = h('div', { class: 'view', title: n ? 'Move across to scrub every frame' : '' }, img, cap);
+  if (n) {
+    view.addEventListener('pointerenter', () => { if (!warm) { warm = true; for (let i = 1; i <= n; i++) new Image().src = src(i); } view.classList.add('scrub'); });
+    view.addEventListener('pointermove', (e) => { const r = view.getBoundingClientRect(); show(clamp(Math.round(((e.clientX - r.left) / r.width) * (n - 1)) + 1, 1, n)); });
+    view.addEventListener('pointerleave', () => { view.classList.remove('scrub'); img.src = src(1); fill.style.width = '0'; cap.textContent = ''; });
+  }
+  const open = st.fOpen === 'keys';
+  const toggle = h('button', { class: `chip ${open ? 'on' : ''}`, onclick: () => { st.fOpen = open ? null : 'keys'; renderPanel(); } }, `Key frames ${keys.length}`);
+  const box = h('div', { class: 'f-seq' }, view, n ? bar : null,
+    h('div', { class: 'meta' }, h('span', {}, n ? `▦ ${n} frames · ${(n / fps).toFixed(1)}s` : '▦ frames'), keys.length ? toggle : null));
+  if (open) box.append(h('div', { class: 'f-keys' }, keys.map((k) => h('a', { href: `${f.base}${k.file}`, target: '_blank', title: k.label },
+    h('img', { src: `${f.base}${k.file}?v=${f.v}`, loading: 'lazy' }), h('span', {}, k.frame != null ? `f${k.frame}` : '', k.label ? h('em', {}, k.label) : null)))));
+  return box;
+}
+function renderFinding(f) {
+  const del = h('button', { class: 'del', title: 'Delete this finding', onclick: async () => {
+    if (!confirm(`Delete the finding “${f.name || f.id}”? Its frames and measurements are removed.`)) return;
+    await fetch(`/api/findings/${f.ref}/${f.id}`, { method: 'DELETE' });
+    st.selF = null; setRange(null); loadNotes();
+  } });
+  del.innerHTML = trash;
+  panel.append(h('div', { class: 'head' }, h('span', { class: 'where' }, where(f)), h('div', { class: 'head-btns' }, h('span', { class: 'saved found' }, '◆ Finding'), del)));
+  const caps = f.captures || [f.motion && 'motion', f.style && 'style'].filter(Boolean);
+  panel.append(h('div', { class: 'f-top' }, h('div', { class: 'f-title' }, f.name || 'Finding'), f.summary ? h('div', { class: 'f-sum' }, f.summary) : null,
+    h('div', { class: 'f-caps' }, caps.map((c) => h('span', { class: `f-cap ${c}` }, c === 'motion' ? '↝ Motion' : c === 'style' ? '◐ Style' : c)))));
+  panel.append(frameSeq(f));
+  const m = f.motion;
+  if (m) {
+    const stats = m.stats?.length ? m.stats : m.duration ? [{ label: 'Duration', value: m.duration }] : [];
+    panel.append(h('div', { class: 'f-sec' }, h('h4', {}, 'Motion'),
+      stats.length ? h('div', { class: 'f-stats' }, stats.map((x) => h('div', { class: 'stat' }, h('span', { class: 'l' }, x.label), h('b', {}, x.value), x.sub ? h('span', { class: 's' }, x.sub) : null))) : null,
+      m.ease ? h('div', { class: 'f-ease' }, m.ease.bezier ? miniCurve(m.ease.bezier) : null,
+        h('div', {}, h('b', {}, m.ease.token || 'custom ease'), m.ease.bezier ? h('code', {}, `[${m.ease.bezier.join(', ')}]`) : null)) : null));
+  }
+  const y = f.style;
+  if (y) {
+    const type = (y.type || []).map((t) => typeof t === 'string' ? { name: t } : t);
+    panel.append(h('div', { class: 'f-sec' }, h('h4', {}, 'Style'),
+      y.palette?.length ? h('div', { class: 'f-pal' }, y.palette.map((c) => h('button', { class: 'sw', title: `${c.hex}${c.role ? ` · ${c.role}` : ''} (click to copy)`, style: { background: c.hex },
+        onclick: async (e) => { try { await navigator.clipboard.writeText(c.hex); } catch {} e.currentTarget.classList.add('copied'); const b = e.currentTarget; setTimeout(() => b.classList.remove('copied'), 900); } }))) : null,
+      type.length ? h('div', { class: 'f-type' }, type.map((t) => {
+        const fam = sampleFont(t.font);
+        const kind = t.kind || (/serif/i.test(`${t.name} ${t.font}`) && !/sans/i.test(`${t.name} ${t.font}`) ? 'serif' : 'sans');
+        return h('div', { class: 'tp', title: [t.name, t.spec].filter(Boolean).join(' · ') },
+          h('span', { class: 'aa', style: { fontFamily: fam ? `${fam}, ${kind === 'serif' ? 'Georgia, serif' : 'system-ui, sans-serif'}` : (kind === 'serif' ? 'Georgia, serif' : 'system-ui, sans-serif') } }, 'Aa'),
+          h('span', {}, h('b', {}, t.role || (t.name.split(/[:(,]/)[0])), t.font ? h('em', {}, t.font) : null));
+      })) : null));
+  }
+  // the detail, on demand
+  const drawer = (key, label) => h('button', { class: `chip ${st.fOpen === key ? 'on' : ''}`, onclick: () => { st.fOpen = st.fOpen === key ? null : key; renderPanel(); } }, label);
+  const handle = `ref:${f.ref}/${f.slug || f.id}`;
+  const copy = h('button', { class: 'chip ghost', title: 'Copy the handle, to name this finding in a note', onclick: async (e) => { try { await navigator.clipboard.writeText(handle); } catch {} e.currentTarget.textContent = 'Copied ✓'; } }, `⧉ ${handle}`);
+  panel.append(h('div', { class: 'f-more' }, drawer('spec', '▤ Text spec'), m?.build ? drawer('code', '</> Code') : null, copy));
+  const list = (title, items) => items?.length ? h('div', {}, h('h5', {}, title), h('ul', {}, items.map((t) => h('li', {}, t)))) : null;
+  if (st.fOpen === 'spec') panel.append(h('div', { class: 'f-drawer' },
+    f.ask ? h('div', { class: 'followup' }, h('b', {}, 'You asked: '), f.ask) : null,
+    list('Motion', m?.points),
+    list('Type', (y?.type || []).map((t) => typeof t === 'string' ? t : [t.role, t.name, t.spec].filter(Boolean).join(' · '))),
+    list('Colours', (y?.palette || []).filter((c) => c.role).map((c) => `${c.hex} · ${c.role}`)),
+    list('Style', y?.points)));
+  if (st.fOpen === 'code' && m?.build) panel.append(h('pre', { class: 'f-code' }, m.build));
 }
 
 // cubic-bezier editor (the value graph only); y may leave 0..1 (anticipation / overshoot)
@@ -1077,13 +1231,24 @@ $('#exportBtn').onclick = async () => {
   pollExport();
 };
 $('#exportStop').onclick = async () => { $('#exportStop').disabled = true; await fetch(`/api/export?scene=${st.scene}`, { method: 'DELETE' }); $('#exportStop').disabled = false; pollExport(); };
-$('#sendBtn').onclick = async () => {
+// Send to Claude: every unsent note on the scene goes (the top button, or a note's own ↑ / ⌘↵)
+async function sendToClaude() {
   const b = $('#sendBtn');
   if (st.pending?.text?.trim()) await persist(st.pending);
+  await queue;
   await fetch('/api/go', json('POST', { scene: st.scene }));
   b.textContent = 'Sent — Claude is on it'; b.classList.add('on');
   setTimeout(() => { b.textContent = '▶ Send to Claude'; b.classList.remove('on'); }, 4000);
-};
+  loadNotes();   // the sent notes turn to "With Claude"
+}
+async function sendNote(n) {
+  clearTimeout(saveTimer);
+  if (!n.text?.trim()) return;
+  delete n._fresh; st.editing = false;
+  await persist(n);
+  await sendToClaude();
+}
+$('#sendBtn').onclick = sendToClaude;
 $('#zoomIn').onclick = () => { st.zoomed = true; zoomBy(1.5); };
 $('#zoomMinus').onclick = () => { st.zoomed = true; zoomBy(1 / 1.5); };
 $('#zoomOut').onclick = () => { st.zoomed = false; fitDefault(); layoutTimeline(); };
@@ -1101,7 +1266,30 @@ function setMenu(open) {
   if (open) { const r = brandBtn.getBoundingClientRect(); brandMenu.style.left = `${r.left}px`; brandMenu.style.top = `${r.bottom + 4}px`; brandMenu.firstElementChild.focus({ preventScroll: true }); }
 }
 brandBtn.onclick = (e) => { e.stopPropagation(); setMenu(brandMenu.hidden); };
-brandMenu.onclick = (e) => { if (e.target.closest('#loopItem')) setLoop(!st.loop); if (e.target.closest('button, a')) setMenu(false); };
+brandMenu.onclick = (e) => { if (e.target.closest('#loopItem')) setLoop(!st.loop); if (e.target.closest('#referencesLink')) openRefs(); if (e.target.closest('button, a')) setMenu(false); };
+
+// References: a panel over the editor (editor/references.html in a frame). Picking one there opens it here.
+function openRefs() {
+  if (EMBED || $('#refsModal')) return;
+  const close = () => {
+    const m = $('#refsModal');
+    if (!m || m.classList.contains('closing')) return;
+    removeEventListener('keydown', onKey, true);
+    m.classList.add('closing');
+    setTimeout(() => m.remove(), 240);   // after the closing animation (editor.css)
+  };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
+  const modal = h('div', { id: 'refsModal', onclick: (e) => { if (e.target.id === 'refsModal') close(); } },
+    h('div', { class: 'sheet' }, h('iframe', { src: '/editor/references.html?embed', title: 'References' })));
+  modal._close = close;
+  document.body.append(modal);
+  addEventListener('keydown', onKey, true);
+  setPlaying(false);
+}
+addEventListener('message', (e) => {
+  if (e.origin !== location.origin || !e.data?.type) return;
+  if (e.data.type === 'ms:close-refs') $('#refsModal')?._close();
+});
 addEventListener('pointerdown', (e) => { if (!brandMenu.hidden && !e.target.closest('#brandMenu, #brandBtn')) setMenu(false); });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && !brandMenu.hidden) { e.stopImmediatePropagation(); setMenu(false); brandBtn.focus(); } }, true);
 $('#commentBtn').onclick = () => setComment(!st.comment);
@@ -1131,8 +1319,9 @@ addEventListener('keydown', (e) => {
     case '-': case '_': st.zoomed = true; zoomBy(1 / 1.5); break;
     case '0': st.zoomed = false; fitDefault(); layoutTimeline(); break;
     case 'l': case 'L': setLoop(!st.loop); break;
+    case 'r': case 'R': if (!e.metaKey && !e.ctrlKey) openRefs(); break;
     case 's': case 'S': case 'c': case 'C': if (!e.metaKey && !e.ctrlKey) setComment(!st.comment); break;
-    case 'Escape': dismissNote(); break;
+    case 'Escape': if (EMBED && !st.pending && !st.sel && !st.selF && !st.comment && !st.rec) closePanel(); else { dismissNote(); if (st.selF) { st.selF = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); } } break;
     default: return;
   }
 });

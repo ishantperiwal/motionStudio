@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>References · Motion Studio</title>
+<style>
+  :root { --bg: #111317; --panel: #1a1d23; --line: #2a2e36; --text: #e8eaee; --muted: #9aa0ab; --accent: #4f8cff; --note: #F2711C; --bad: #F85149; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; font-weight: 650; }
+  header a { color: var(--muted); text-decoration: none; }
+  header a:hover { color: var(--text); }
+  .embed header a { display: none; }   /* in the editor's panel: its ✕ closes it */
+  #closePanel { display: none; margin-left: auto; align-self: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; font: inherit; }
+  #closePanel:hover { color: #fff; border-color: #3a404b; }
+  .embed #closePanel { display: block; }
+  .embed header { padding: 12px 16px 12px 24px; align-items: center; }
+  form { display: flex; gap: 10px; padding: 20px 24px 0; }
+  form input { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; font: inherit; outline: none; }
+  form input:focus { border-color: var(--accent); }
+  form button { background: var(--note); border: 0; color: #fff; font: 600 14px inherit; border-radius: 8px; padding: 0 16px; cursor: pointer; }
+  #msg { padding: 8px 24px 0; color: var(--muted); font-size: 13px; }
+  #msg.err { color: var(--bad); }
+  main { padding: 20px 24px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+  .tile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; transition: border-color .15s; }
+  .tile:hover { border-color: #3a404b; }
+  .tile.busy { cursor: default; }
+  .media { position: relative; aspect-ratio: 16 / 10; background: #0b0d10; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+  .media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+  .meta { padding: 12px 14px 14px; }
+  .meta b { display: block; font-size: 15px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta p { margin: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .del { position: absolute; right: 10px; top: 10px; z-index: 1; font: 12px inherit; color: #fff; background: rgba(0,0,0,.6); border: 0; border-radius: 6px; padding: 3px 9px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+  .tile:hover .del, .del:focus-visible { opacity: 1; }
+  .del:hover { background: var(--bad); }
+  .empty { color: var(--muted); padding: 16px 0; }
+  #dropCover { position: fixed; inset: 0; z-index: 40; display: none; place-items: center; background: rgba(17,19,23,.88); border: 3px dashed var(--note); font-size: 20px; font-weight: 600; pointer-events: none; }
+  body.dragging #dropCover { display: grid; }
+</style>
+</head>
+<body>
+<header><a href="/editor/">← Editor</a><h1>References</h1><button id="closePanel" title="Close (Esc)">✕</button></header>
+<form id="add"><input type="url" id="link" placeholder="Paste a link to a video (a tweet, YouTube, Instagram, Vimeo…) or drop a video file anywhere" autocomplete="off" spellcheck="false"><button>Add</button></form>
+<div id="msg" hidden></div>
+<main id="grid"></main>
+<div id="dropCover">Drop the video to add it</div>
+<script type="module" src="references.js"></script>
+</body>
+</html>

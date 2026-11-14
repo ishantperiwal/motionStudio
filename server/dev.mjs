@@ -7,6 +7,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { ROOT, PROJECT } from './project.mjs';
+import { listRefs, listRefScenes, scenePage, addLink, addFile, deleteRef, safeRefId, hasYtDlp, PREFIX, listFindings, allFindings, deleteFinding } from './refs.mjs';
 
 // The browser for capturing frames: Playwright's own Chromium (npx playwright install chromium), never the user's Google
 // Chrome app. A hidden instance of the real Chrome app takes its place on macOS: with the user's Chrome closed, clicking
@@ -244,7 +245,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         res.write('retry: 1000\n\n'); clients.add(res); req.on('close', () => clients.delete(res));
         return;
       }
-      if (p === '/api/scenes') return send(res, 200, await listScenes());
+      if (p === '/api/scenes') return send(res, 200, [...await listScenes(), ...await listRefScenes()]);   // films, then references
       // one fully rendered frame (JPEG). scale: device pixels per stage pixel (the editor's view size); focus: the playhead
       if (p === '/api/frame' || p === '/api/cached') {
         const scene = safeId(url.searchParams.get('scene'));
@@ -269,6 +270,35 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/api/techniques') return send(res, 200, listTechniques());
 
       let m;
+      // References (server/refs.mjs): other people's videos, opened in the editor as scenes `ref.<id>` to note moments on
+      if (p === '/api/refs' && req.method === 'GET') return send(res, 200, { refs: await listRefs(), ytdlp: hasYtDlp() });
+      if (p === '/api/refs' && req.method === 'POST') {
+        try { return send(res, 200, await addLink((await readBody(req)).url?.trim())); } catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (p === '/api/refs/upload' && req.method === 'POST') {
+        try { return send(res, 200, await addFile(req, url.searchParams.get('name'))); } catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if ((m = p.match(/^\/api\/refs\/([\w-]+)$/)) && req.method === 'DELETE') {
+        const id = safeRefId(m[1]);
+        if (!id) return send(res, 404, { error: 'no such reference' });
+        await deleteRef(id);
+        await fsp.rm(path.join(PROJECT, 'notes', PREFIX + id), { recursive: true, force: true });   // its notes go with it
+        return send(res, 200, { ok: true });
+      }
+      // findings: studied moments of a reference (?ref=<id>), or every one in the project (a film note's "+ reference")
+      if (p === '/api/findings' && req.method === 'GET') {
+        const id = url.searchParams.get('ref');
+        return send(res, 200, id ? (safeRefId(id) ? await listFindings(id) : []) : await allFindings());
+      }
+      if ((m = p.match(/^\/api\/findings\/([\w-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
+        if (safeRefId(m[1])) await deleteFinding(m[1], m[2]);
+        return send(res, 200, { ok: true });
+      }
+      if ((m = p.match(/^\/scenes\/ref\.([\w-]+)\/(index\.html)?$/))) {   // a reference's scene page
+        const html = safeRefId(m[1]) && await scenePage(m[1]);
+        return html ? send(res, 200, html, 'text/html; charset=utf-8') : send(res, 404, 'not ready', 'text/plain');
+      }
+
       if (p === '/api/notes' && req.method === 'GET') {
         const scene = safeId(url.searchParams.get('scene'));
         const dir = path.join(PROJECT, 'notes', scene || '_');
@@ -280,7 +310,15 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/api/go' && req.method === 'POST') {
         const { scene } = await readBody(req);
         if (!safeId(scene)) return send(res, 400, { error: 'scene required' });
-        await writeJSON(path.join(PROJECT, 'notes', '_go.json'), { scene, at: new Date().toISOString() });
+        // every open note on the scene is now with Claude: the editor shows them as processing until Claude finishes
+        // them (deletes them, or replies)
+        const at = new Date().toISOString(), ndir = path.join(PROJECT, 'notes', scene);
+        for (const f of fs.existsSync(ndir) ? await fsp.readdir(ndir) : []) {
+          if (!f.endsWith('.json') || f.startsWith('_')) continue;
+          const note = await readJSON(path.join(ndir, f), null);
+          if (note && !note.reply) await writeJSON(path.join(ndir, f), { ...note, sentAt: at });
+        }
+        await writeJSON(path.join(PROJECT, 'notes', '_go.json'), { scene, at });
         return send(res, 200, { ok: true });
       }
       if (p === '/api/go' && req.method === 'GET') return send(res, 200, { pending: fs.existsSync(path.join(PROJECT, 'notes', '_go.json')) });
@@ -393,7 +431,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/') { res.writeHead(302, { Location: '/editor/' }); return res.end(); }
       // the project's own folders come from the project; everything else (editor, runtime, themes, …) from the studio
       let file = p.startsWith('/vendor/') ? inside(path.join(ROOT, 'node_modules'), p.slice(7))
-        : inside(/^\/(scenes|notes|out)(\/|$)/.test(p) ? PROJECT : ROOT, p);
+        : inside(/^\/(scenes|notes|out|references)(\/|$)/.test(p) ? PROJECT : ROOT, p);
       if (!file) return send(res, 403, 'forbidden', 'text/plain');
       if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
       if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
@@ -414,13 +452,14 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
 
   if (watch) {
     let timer = null, changed = new Set();
-    for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes']) {
-      const abs = path.join(dir === 'scenes' || dir === 'notes' ? PROJECT : ROOT, dir);
+    for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes', 'references']) {
+      const abs = path.join(['scenes', 'notes', 'references'].includes(dir) ? PROJECT : ROOT, dir);
       fs.mkdirSync(abs, { recursive: true });
       fs.watch(abs, { recursive: true }, (_, f) => {
         if (!f || /(^|\/)\.|~$/.test(f)) return;
+        if (dir === 'references' && !/(^|\/)(ref|finding)\.json$/.test(f)) return;   // not every frame file being written
         changed.add(`${dir}/${f}`);
-        if (dir !== 'notes' && dir !== 'editor') sceneVersion++;   // scene, runtime or tokens changed: playback frames are stale
+        if (!['notes', 'editor', 'references'].includes(dir)) sceneVersion++;   // scene, runtime or tokens changed: playback frames are stale
         clearTimeout(timer);
         timer = setTimeout(() => { broadcast({ type: 'change', paths: [...changed] }); changed = new Set(); }, 60);
       });

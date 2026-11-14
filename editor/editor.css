@@ -206,3 +206,106 @@ button.ghost { background: transparent; border-style: dashed; color: var(--muted
 .region.edit.picked { border-style: solid; box-shadow: 0 0 0 3px rgba(242, 113, 28, .35); }
 
 #sceneBadge { margin-left: 8px; padding: 3px 9px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: #a9a9b3; font-size: 12px; font-weight: 600; white-space: nowrap; }
+
+/* a note sent with "Send to Claude" and not finished yet: stripes run across its bar */
+.nbar.processing { background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, .32) 0 6px, transparent 6px 12px); background-size: 17px 17px; animation: ms-proc .8s linear infinite; }
+.nbar.point.processing { animation: ms-pulse 1s ease-in-out infinite; }
+@keyframes ms-proc { to { background-position: 17px 0; } }
+@keyframes ms-pulse { 50% { opacity: .35; } }
+.lane .proc { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--note); vertical-align: 1px; animation: ms-pulse 1s ease-in-out infinite; }
+#panel .saved.proc { color: var(--note); animation: ms-pulse 1.4s ease-in-out infinite; }
+
+/* findings: the studied moments of a reference */
+.nbar.fbar { cursor: pointer; }
+.nbar.fbar.timed { background: rgba(63, 185, 80, .35); border: 1px solid var(--ok); }
+.nbar.fbar.point { background: var(--ok); }
+.lane .fmark { color: var(--ok); margin-right: 5px; font-size: 10px; }
+.lane.finding.sel { background: rgba(63, 185, 80, .1); }
+.lane.finding.sel .name { background: #1c2620; }
+.region.found { border-color: var(--ok); background: rgba(63, 185, 80, .08); }
+.region.found .lbl { background: var(--ok); }
+#panel .saved.found { color: var(--ok); }
+.cue.refc { color: #c8f0d0; border-color: rgba(63, 185, 80, .5); background: rgba(63, 185, 80, .12); padding-left: 8px; }
+.cue.refc .fmark { color: var(--ok); font-size: 9px; }
+.cue.refc .x { margin-left: 2px; color: var(--muted); }
+.cue.refc .x:hover { color: #fff; }
+#panel .f-pick { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; background: var(--bg); }
+#panel .f-pick .f-item { display: flex; gap: 9px; align-items: flex-start; text-align: left; border: 0; background: transparent; padding: 6px; border-radius: 6px; }
+#panel .f-pick .f-item:hover { background: var(--panel2); }
+#panel .f-pick img, #panel .f-pick .ph { width: 64px; height: 40px; flex: none; object-fit: cover; border-radius: 4px; background: #000; }
+#panel .f-pick .tx { display: flex; flex-direction: column; gap: 1px; font-size: 12px; line-height: 1.35; }
+#panel .f-pick .tx b { font-size: 12.5px; }
+
+/* References: a panel over the editor, with a margin all round. It rises from below while scaling up, as the editor
+   behind dims and blurs; closing plays it back */
+#refsModal { position: fixed; inset: 0; z-index: 80; padding: 28px; display: flex; background: rgba(8, 9, 11, .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: ms-veil-in .34s cubic-bezier(.16, 1, .3, 1) both; }
+#refsModal .sheet { position: relative; flex: 1; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #111317; box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
+  transform-origin: 50% 100%; animation: ms-sheet-in .42s cubic-bezier(.16, 1, .3, 1) both; }
+#refsModal.closing { animation: ms-veil-out .24s cubic-bezier(.4, 0, 1, 1) both; }
+#refsModal.closing .sheet { animation: ms-sheet-out .24s cubic-bezier(.4, 0, 1, 1) both; }
+#refsModal iframe { width: 100%; height: 100%; border: 0; display: block; }
+@keyframes ms-veil-in { from { background: rgba(8, 9, 11, 0); backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); } }
+@keyframes ms-veil-out { to { background: rgba(8, 9, 11, 0); backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); } }
+@keyframes ms-sheet-in { from { opacity: 0; transform: translateY(48px) scale(.95); } }
+@keyframes ms-sheet-out { to { opacity: 0; transform: translateY(32px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { #refsModal, #refsModal .sheet { animation-duration: .01s !important; } }
+/* the editor inside the References panel, on one reference: no menu, picker or export; a way back to the list */
+body.embed .brand, body.embed #scenePick, body.embed #exportGroup { display: none; }
+body.embed #top .back { color: var(--muted); text-decoration: none; white-space: nowrap; padding: 4px 6px; border-radius: 6px; }
+body.embed #top .back:hover { color: var(--text); background: var(--panel2); }
+body.embed #top .ref-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 40%; }
+body.embed #top .close-panel { width: 28px; height: 28px; padding: 0; margin-left: 2px; color: var(--muted); flex: none; }
+body.embed #top .close-panel:hover { color: #fff; }
+
+/* a finding, at a glance */
+#panel .f-top { display: flex; flex-direction: column; gap: 6px; }
+#panel .f-title { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+#panel .f-sum { color: #c9ccd2; font-size: 13px; line-height: 1.45; }
+#panel .f-caps { display: flex; gap: 6px; margin-top: 2px; }
+#panel .f-cap { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: rgba(63, 185, 80, .12); color: #9fe0ab; border: 1px solid rgba(63, 185, 80, .35); }
+#panel .f-cap.style { background: rgba(160, 102, 255, .12); color: #cdb4ff; border-color: rgba(160, 102, 255, .38); }
+#panel .f-seq { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+#panel .f-seq .view { position: relative; cursor: ew-resize; background: #000; }
+#panel .f-seq .view img { display: block; width: 100%; }
+#panel .f-seq .view .cap { position: absolute; left: 6px; bottom: 6px; font-size: 11px; font-variant-numeric: tabular-nums; color: #fff; background: rgba(0, 0, 0, .62); padding: 1px 7px; border-radius: 4px; opacity: 0; transition: opacity .12s; pointer-events: none; }
+#panel .f-seq .view.scrub .cap { opacity: 1; }
+#panel .f-seq .bar { position: relative; height: 4px; background: #24262b; }
+#panel .f-seq .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); }
+#panel .f-seq .bar b { position: absolute; top: -2px; width: 2px; height: 8px; margin-left: -1px; background: #e7e8ea; border-radius: 1px; opacity: .8; }
+#panel .f-seq .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#panel .f-keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 9px 9px; }
+#panel .f-keys a { display: flex; flex-direction: column; gap: 3px; color: var(--muted); text-decoration: none; font-size: 11px; line-height: 1.3; }
+#panel .f-keys img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
+#panel .f-keys a:hover img { border-color: var(--ok); }
+#panel .f-keys em { font-style: normal; color: #b8bcc4; display: block; }
+#panel .chip { font-size: 12px; padding: 3px 10px; border-radius: 99px; background: var(--panel2); color: #cfd3da; }
+#panel .chip.on { border-color: var(--ok); color: #fff; background: rgba(63, 185, 80, .14); }
+#panel .chip.ghost { background: transparent; color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#panel .f-sec { display: flex; flex-direction: column; gap: 9px; }
+#panel .f-sec h4 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 650; }
+#panel .f-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 6px; }
+#panel .f-stats .stat { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); min-width: 0; }
+#panel .f-stats .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+#panel .f-stats b { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+#panel .f-stats .s { font-size: 11px; color: var(--muted); }
+#panel .f-ease { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+#panel .f-ease .mini { width: 34px; height: 34px; flex: none; }
+#panel .f-ease .mini path { fill: none; stroke: var(--ok); stroke-width: 3.5; stroke-linecap: round; }
+#panel .f-ease b { display: block; font-size: 13px; }
+#panel .f-ease code { font-size: 11px; color: var(--muted); }
+#panel .f-pal { display: flex; flex-wrap: wrap; gap: 6px; }
+#panel .f-pal .sw { width: 30px; height: 30px; padding: 0; border-radius: 7px; border: 1px solid rgba(255, 255, 255, .14); position: relative; }
+#panel .f-pal .sw:hover { transform: translateY(-1px); border-color: rgba(255, 255, 255, .5); }
+#panel .f-pal .sw.copied::after { content: "✓"; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; text-shadow: 0 1px 3px #000; font-weight: 700; }
+#panel .f-type { display: flex; flex-direction: column; gap: 6px; }
+#panel .f-type .tp { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; }
+#panel .f-type .aa { font-size: 24px; line-height: 1; width: 38px; flex: none; color: #f1efe6; }
+#panel .f-type b { display: block; font-size: 12.5px; font-weight: 600; }
+#panel .f-type em { display: block; font-style: normal; font-size: 11px; color: var(--muted); }
+#panel .f-more { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+#panel .f-drawer { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; line-height: 1.45; color: #d7d9de; }
+#panel .f-drawer h5 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 650; }
+#panel .f-drawer ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+#panel .f-code { margin: 0; white-space: pre-wrap; font: 11.5px/1.5 ui-monospace, Menlo, monospace; color: #cfd3da; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+#panel .saved.draft { color: var(--muted); }

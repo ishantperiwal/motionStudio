@@ -16,7 +16,8 @@ Motion videos written in code, directed with notes pinned to frames.
 See **[RUN-STUDIO.md](RUN-STUDIO.md)** for a step-by-step guide to running it.
 
 ## Requirements
-macOS, Node 20+, **Google Chrome** (rendering uses it via Playwright) and **ffmpeg** on PATH.
+macOS, Node 20+, **Google Chrome** (rendering uses it via Playwright) and **ffmpeg** on PATH. **yt-dlp** for adding
+references by link (`brew install yt-dlp`; dropping a video file works without it).
 Scenes use the system font (SF Pro), so renders match across Macs.
 
 ## Run
@@ -33,12 +34,13 @@ npm run new-scene -- my-film   # scaffold scenes/my-film (import map, stage, sta
 | Note a spot | ✎ Spot or **S**, then draw a tight box (or click) |
 | Note a span | Drag across the top timeline row, or hold **⇧** while scrubbing / stepping / playing |
 | Adjust a span | Drag a note bar's ends — the viewport shows the frame under the end you drag |
-| Save / edit / delete a note | ✓ (or ⌘↵) · click the text · 🗑 (or ⌫ with the note selected) |
+| Save / send / edit / delete a note | Typing saves as you go · **↑** on the note (or ⌘↵) sends it to Claude, with any other unsent notes on the scene · Enter is a new line · Esc closes (a note with text stays as a **Draft**) · click the text to edit · 🗑 (or ⌫ with the note selected) |
 | Show the easing you want | **+ easing** on a note — curve editor with speed graph and presets |
-| Ask Claude to work the notes | **▶ Send to Claude** (needs a Claude session running `tools/wait-for-notes.mjs`) |
+| Ask Claude to work the notes | **▶ Send to Claude** (needs a Claude session running `tools/wait-for-notes.mjs`). Sent notes show moving stripes until Claude has worked them |
 | Review Claude's changes | **To check** list (shown when no note is selected): click to jump, ✓ when checked, ↩ to reply |
 | Export | **⤓ Export MP4** — 1080p, motion blur, H.264 CRF 18, saved to `out/` |
 | Copy a note with its context | ⌘C with the note selected |
+| Show Claude a moment from another video | Motion Studio menu → **References**: paste a link or drop a file, open it, note the moment (and whether you want its motion, its style or both), **▶ Send to Claude**; then **+ reference** on a film note uses it. See [References](#references) |
 | Zoom the timeline | −/+ (or pinch / ⌘-scroll), 0 resets to the 30 s view; ⇧-scroll to pan |
 
 ## Command line
@@ -78,6 +80,23 @@ proportional tilt, optional name tag), `typer` (uneven seeded typing), `loadSvg`
 [`themes/`](themes/README.md) keeps finished films as references (gallery at `/themes/`). [`techniques/`](techniques/README.md)
 keeps single reusable moves, each with a live demo and a kit you import (gallery at `/techniques/`; both are in the
 editor's Motion Studio menu). So far: the construct reveal (`runtime/kits/construct.js`) and the glossy shine (`runtime/kits/shine.js`).
+
+## References
+Other people's videos, for Claude to study and copy the motion of (not the look):
+1. Motion Studio menu → **References** (or **R**), a panel over the editor: paste a link (a tweet, YouTube, Instagram, Vimeo…, downloaded with `yt-dlp`)
+   or drop a video file anywhere on the page. Long videos are fetched small for marking; the moments you note come
+   in full quality.
+2. Click it: its own editor opens inside the panel (the main window stays on your film; references never appear in
+   the scene picker; **← References** goes back to the list). Leave notes as usual:
+   a span over the moment you like, a box around what moves, a line saying what you like.
+3. **▶ Send to Claude** (the note's bar shows it's being worked on). Claude runs `npm run ref -- <id>`, which cuts each
+   noted moment out and saves its frames, full-size stills, a labelled contact sheet, motion measurements (duration,
+   travel, overshoot, a fitted easing and the nearest token) and the colour palette. Claude then writes a *finding*:
+   a green bar on the reference's timeline; click it for the key frames, the motion and (if your note asked) the style.
+4. On a film note, **+ reference** picks a finding; Claude applies its motion and/or style to that span.
+
+References live in the project (`<project>/references/`, never in the studio's git): each person keeps their own.
+A reference worth keeping for everyone becomes a technique, on request.
 
 ## Scenes
 None ship with the studio. Create one with `npm run new-scene -- my-film`; each scene lives in

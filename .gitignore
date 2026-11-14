@@ -13,3 +13,6 @@ scenes/*
 
 # this copy's project folder (see server/project.mjs): per machine
 project.txt
+
+# references: moments from other people's videos, per project (editor/references.html); never part of the studio
+references/

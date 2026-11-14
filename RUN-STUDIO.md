@@ -1,7 +1,8 @@
 # Run Motion Studio
 
 ## First time (once per Mac)
-1. Install [Node.js](https://nodejs.org) 20 or newer, Google Chrome, and ffmpeg (`brew install ffmpeg`).
+1. Install [Node.js](https://nodejs.org) 20 or newer, Google Chrome, ffmpeg and yt-dlp (`brew install ffmpeg yt-dlp`;
+   yt-dlp downloads videos for References from a link).
 2. Get the project and its libraries:
    ```bash
    git clone https://github.com/ishantperiwal/motionStudio.git
@@ -68,6 +69,13 @@ Good to know:
   No output means it's not running. If you have more than one copy of the studio, make sure one is
   running for *this* folder: `pgrep -fl wait-for-notes` lists every copy's watcher, and
   `lsof -p <pid> | grep cwd` shows which folder a watcher belongs to.
+
+## Show Claude a moment from another video
+Motion Studio menu → **References** (or **R**): a panel over the editor. Paste a link (or drop a video file), then click
+it: its own editor opens inside the panel, while your film stays in the main window. Leave a note on the moment you like (a span, a box around what matters, a line saying what you want from it:
+its motion, its style or both) and press **▶ Send to Claude**. Claude studies it and adds a *finding* to its timeline
+(key frames, motion, style). On a note in your film, **+ reference** picks that finding and Claude applies it there.
+References stay in your project folder, never in the studio's git.
 
 ## Export a video
 Press **⤓ Export MP4** in the editor. When it's done, press **Download**. Files are also saved in `out/` (in your

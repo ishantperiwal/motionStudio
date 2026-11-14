@@ -8,7 +8,8 @@
     "dev": "node server/dev.mjs",
     "render": "node render/render.mjs",
     "probe": "node render/probe.mjs",
-    "new-scene": "node tools/new-scene.mjs"
+    "new-scene": "node tools/new-scene.mjs",
+    "ref": "node tools/ref.mjs"
   },
   "dependencies": {
     "@fontsource/big-shoulders-display": "^5.3.0",

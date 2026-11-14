@@ -100,7 +100,8 @@ ${npm} run render -- ${id} --frames 0,100 ${P}
 ${npm} run render -- ${id} ${P}
 ${npm} run new-scene -- my-next-film ${P}
 \`\`\`
-Frames go to \`out/<film>-frames/\`, videos to \`out/\`, new films to \`scenes/\`. Check a watcher is running with
+Frames go to \`out/<film>-frames/\`, videos to \`out/\`, new films to \`scenes/\`, references (Motion Studio menu →
+References) to \`references/\`. Check a watcher is running with
 \`pgrep -fl wait-for-notes\` (its command line names the project).
 `);
   console.log(`${guide} written: how to run the studio and the notes watcher for this project`);
