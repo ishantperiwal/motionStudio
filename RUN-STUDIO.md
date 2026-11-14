@@ -70,12 +70,15 @@ Good to know:
   running for *this* folder: `pgrep -fl wait-for-notes` lists every copy's watcher, and
   `lsof -p <pid> | grep cwd` shows which folder a watcher belongs to.
 
-## Show Claude a moment from another video
-Motion Studio menu → **References** (or **R**): a panel over the editor. Paste a link (or drop a video file), then click
-it: its own editor opens inside the panel, while your film stays in the main window. Leave a note on the moment you like (a span, a box around what matters, a line saying what you want from it:
-its motion, its style or both) and press **▶ Send to Claude**. Claude studies it and adds a *finding* to its timeline
-(key frames, motion, style). On a note in your film, **+ reference** picks that finding and Claude applies it there.
-References stay in your project folder, never in the studio's git.
+## Borrow from another video, or use your own files
+Motion Studio menu → **References** (or **R**): a panel over the editor.
+- **References tab:** paste a link (or drop a video), click it, then mark the moments you like (drag a span, box what
+  matters, name it, **◆ Save**). Each one is saved with its frames and measurements at once.
+- **Files tab:** your own footage, screenshots, icons and fonts.
+
+In your film, a note's **+ reference** points at a moment ("make the card land like this"), and **+ media**, or
+dropping a file onto the note, attaches a file as A1, A2… ("use A1 as the background"). Then **▶ Send to Claude**.
+All of it stays in your project folder, never in the studio's git.
 
 ## Export a video
 Press **⤓ Export MP4** in the editor. When it's done, press **Download**. Files are also saved in `out/` (in your

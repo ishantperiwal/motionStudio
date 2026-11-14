@@ -11,6 +11,14 @@
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, system-ui, sans-serif; }
   header { display: flex; align-items: baseline; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); }
   header h1 { margin: 0; font-size: 17px; font-weight: 650; }
+  #tabs { display: flex; gap: 4px; }
+  #tabs button { background: transparent; border: 0; color: var(--muted); font: 650 17px -apple-system, system-ui, sans-serif; padding: 0 8px 4px; cursor: pointer; border-bottom: 2px solid transparent; }
+  #tabs button.on { color: var(--text); border-bottom-color: var(--note); }
+  #up { display: flex; align-items: center; gap: 12px; padding: 20px 24px 0; color: var(--muted); font-size: 13.5px; }
+  #up[hidden] { display: none; }
+  #up button { background: var(--note); border: 0; color: #fff; font: 600 14px -apple-system, system-ui, sans-serif; border-radius: 8px; padding: 8px 16px; cursor: pointer; flex: none; }
+  .tile .kind { position: absolute; left: 10px; top: 10px; font-size: 11px; color: #fff; background: rgba(0,0,0,.6); padding: 2px 8px; border-radius: 99px; }
+  .media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   header a { color: var(--muted); text-decoration: none; }
   header a:hover { color: var(--text); }
   .embed header a { display: none; }   /* in the editor's panel: its ✕ closes it */
@@ -42,8 +50,9 @@
 </style>
 </head>
 <body>
-<header><a href="/editor/">← Editor</a><h1>References</h1><button id="closePanel" title="Close (Esc)">✕</button></header>
+<header><a href="/editor/">← Editor</a><nav id="tabs"><button data-tab="refs" class="on">References</button><button data-tab="files">Files</button></nav><button id="closePanel" title="Close (Esc)">✕</button></header>
 <form id="add"><input type="url" id="link" placeholder="Paste a link to a video (a tweet, YouTube, Instagram, Vimeo…) or drop a video file anywhere" autocomplete="off" spellcheck="false"><button>Add</button></form>
+<form id="up" hidden><span>Your own footage, screenshots, icons and fonts, to use in films or attach to notes. Drop files anywhere, or</span><input type="file" id="pick" multiple hidden><button type="button" id="pickBtn">Upload…</button></form>
 <div id="msg" hidden></div>
 <main id="grid"></main>
 <div id="dropCover">Drop the video to add it</div>

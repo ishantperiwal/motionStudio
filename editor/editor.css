@@ -180,11 +180,6 @@ button.ghost { background: transparent; border-style: dashed; color: var(--muted
 .check-h .check-all { font-size: 11.5px; font-weight: 600; padding: 3px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ok); white-space: nowrap; }
 .check-h .check-all:hover { background: rgba(80, 200, 120, .14); }
 .check-h { align-items: center; }
-#panel .refs { display: flex; flex-wrap: wrap; gap: 8px; }
-#panel .ref { position: relative; width: 84px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
-#panel .ref img { width: 100%; height: 100%; object-fit: cover; display: block; }
-#panel .ref .x { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; padding: 0; border-radius: 9px; font-size: 12px; line-height: 16px; background: rgba(0,0,0,.6); color: #fff; border: 0; opacity: 0; }
-#panel .ref:hover .x { opacity: 1; }
 
 /* reply mode: the ✓ slot becomes a send button */
 .resolve.send { color: #fff; background: var(--accent); border-color: var(--accent); font-weight: 800; }
@@ -225,10 +220,6 @@ button.ghost { background: transparent; border-style: dashed; color: var(--muted
 .region.found { border-color: var(--ok); background: rgba(63, 185, 80, .08); }
 .region.found .lbl { background: var(--ok); }
 #panel .saved.found { color: var(--ok); }
-.cue.refc { color: #c8f0d0; border-color: rgba(63, 185, 80, .5); background: rgba(63, 185, 80, .12); padding-left: 8px; }
-.cue.refc .fmark { color: var(--ok); font-size: 9px; }
-.cue.refc .x { margin-left: 2px; color: var(--muted); }
-.cue.refc .x:hover { color: #fff; }
 #panel .f-pick { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; background: var(--bg); }
 #panel .f-pick .f-item { display: flex; gap: 9px; align-items: flex-start; text-align: left; border: 0; background: transparent; padding: 6px; border-radius: 6px; }
 #panel .f-pick .f-item:hover { background: var(--panel2); }
@@ -309,3 +300,40 @@ body.embed #top .close-panel:hover { color: #fff; }
 #panel .f-drawer ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
 #panel .f-code { margin: 0; white-space: pre-wrap; font: 11.5px/1.5 ui-monospace, Menlo, monospace; color: #cfd3da; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
 #panel .saved.draft { color: var(--muted); }
+
+/* a moment on a reference */
+#panel .f-name { font-size: 17px; font-weight: 650; background: transparent; border-color: transparent; padding: 3px 6px; margin-left: -6px; width: 100%; }
+#panel .f-name:hover { border-color: var(--line); }
+#panel .f-name:focus { border-color: var(--ok); outline: none; }
+.nbar.fbar.failed { background: rgba(245, 165, 36, .3); border-color: var(--warn); }
+#top button.resolve.save-moment { width: auto; }
+.resolve.save-moment { width: auto; padding: 0 12px; border-radius: 15px; font-size: 12.5px; color: #fff; background: var(--ok); border-color: var(--ok); }
+.resolve.save-moment:hover { filter: brightness(1.1); background: var(--ok); }
+body.embed #sendBtn { display: none; }   /* a reference has nothing to send: marking a moment saves it */
+
+#panel .f-upload { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 11px; border: 1px dashed #3a3d44; border-radius: 6px; background: transparent; color: #cfd3da; font-size: 12.5px; font-weight: 600; }
+#panel .f-upload:hover { border-color: var(--accent); color: #fff; background: var(--accent-dim); }
+#panel .f-upload svg { flex: none; color: var(--accent); }
+#panel.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
+
+/* the note box: text and attachments in one bordered box, like a chat composer */
+#panel .composer { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); transition: border-color .15s, background .15s; }
+#panel .composer.editing:focus-within { border-color: var(--note); }
+#panel .composer textarea { border: 0; background: transparent; min-height: 120px; padding: 12px; border-radius: 10px; }
+#panel .composer textarea:focus { border: 0; }
+#panel .composer .text-view { border: 0; }
+#panel .composer.draft { background: transparent; }
+#panel .composer.sent { border-color: transparent; background: transparent; }
+#panel .composer.sent .text-view { color: #c9ccd2; padding-left: 12px; border-left: 2px solid var(--note); border-radius: 0; }
+#panel .att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; }
+#panel .composer.sent .att-row { padding-left: 12px; }
+#panel .att-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 30px; padding: 3px 8px 3px 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel2); color: var(--text); text-decoration: none; font-size: 12px; }
+#panel .att-chip:hover { border-color: #3a3d44; }
+#panel .att-chip img, #panel .att-chip video, #panel .att-chip .ph { width: 34px; height: 22px; object-fit: cover; border-radius: 4px; background: #000; flex: none; display: grid; place-items: center; color: var(--muted); font-size: 10px; }
+#panel .att-chip b { color: #cfe0ff; font-size: 11.5px; }
+#panel .att-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+#panel .att-chip.ref { padding-left: 9px; border-color: rgba(63, 185, 80, .45); background: rgba(63, 185, 80, .1); color: #c8f0d0; }
+#panel .att-chip .fmark { color: var(--ok); font-size: 10px; }
+#panel .att-chip .x { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted); line-height: 1; }
+#panel .att-chip .x:hover { color: #fff; }
+#panel .f-pick video { width: 64px; height: 40px; object-fit: cover; border-radius: 4px; background: #000; flex: none; }

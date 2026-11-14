@@ -380,11 +380,11 @@ function buildTimeline() {
     bar.addEventListener('pointerdown', (e) => dragNote(e, n, bar));
     lanes.append(lane);
   }
-  // a reference's findings: the moments Claude has studied (click for the frames, motion and style)
+  // a reference's marked moments (click for the frames and what was measured); striped while they're being captured
   for (const f of st.findings || []) {
-    const bar = h('div', { class: `nbar fbar ${f.range ? 'timed' : 'point'}`, title: f.summary || f.name });
+    const bar = h('div', { class: `nbar fbar ${f.range ? 'timed' : 'point'} ${f.status === 'capturing' ? 'processing' : ''} ${f.status === 'failed' ? 'failed' : ''}`, title: f.status === 'capturing' ? 'Capturing…' : f.text || f.name });
     const lane = h('div', { class: `lane finding ${st.selF === f.id ? 'sel' : ''}` },
-      h('div', { class: 'name', title: f.summary || f.name, onclick: () => selectFinding(f) }, h('span', { class: 'fmark' }, '◆'), f.name || 'Finding'),
+      h('div', { class: 'name', title: f.text || f.name, onclick: () => selectFinding(f) }, h('span', { class: 'fmark' }, '◆'), f.name || 'Moment'),
       bar);
     lane._note = f; lane._finding = true;
     bar.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectFinding(f); });
@@ -696,14 +696,14 @@ async function loadNotes() {
   const [fresh, check, findings] = await Promise.all([
     fetch(`/api/notes?scene=${st.scene}`).then((r) => r.json()),
     fetch(`/api/checklist?scene=${st.scene}`).then((r) => r.json()).catch(() => ({ items: [] })),
-    st.scene.startsWith('ref.') ? fetch(`/api/findings?ref=${st.scene.slice(4)}`).then((r) => r.json()).catch(() => []) : [],
+    st.scene.startsWith('ref.') ? fetch(`/api/moments?ref=${st.scene.slice(4)}`).then((r) => r.json()).catch(() => []) : [],
   ]);
   st.checklist = check.items || [];
   st.findings = findings;
   if (st.selF && !findings.find((f) => f.id === st.selF)) st.selF = null;
   // keep the open note's object (it may hold typing that hasn't round-tripped yet)
   const open = st.notes.find((x) => x.id && x.id === st.sel);
-  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, region: open.region, elements: open.elements, beats: open.beats, useRefs: open.useRefs }) : f));   // the open note's local edits (text, box) win
+  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, region: open.region, elements: open.elements, beats: open.beats, useRefs: open.useRefs, media: open.media }) : f));   // the open note's local edits (text, box) win
   // the open note was resolved elsewhere (e.g. by Claude): drop it and the time range it had selected,
   // so a spot note drawn next doesn't inherit that range and turn into a span note
   if (st.sel && !st.notes.find((n) => n.id === st.sel)) { st.sel = null; setRange(null); }
@@ -748,7 +748,7 @@ lanes.addEventListener('pointerdown', (e) => { if (!e.target.closest('.nbar, .na
 
 function selectNote(n) {
   if (st.pending && st.pending.text?.trim()) persist(st.pending);
-  st.pending = null; st.sel = n.id; st.selF = null; st.curveOpen = false; st.editing = false; st.refPick = false;
+  st.pending = null; st.sel = n.id; st.selF = null; st.curveOpen = false; st.editing = false; st.pick = null;
   st.areaSel = false;                  // picking the note (timeline bar) selects the note, not its area
   setPlaying(false);
   seek(n.frame, true);
@@ -777,13 +777,11 @@ function persist(n) {
       const { scene: _s, id: _i, created: _c, ...body } = n;
       const note = await (await fetch('/api/notes', json('POST', { ...body, scene: st.scene }))).json();
       n.id = note.id; n.created = note.created; n._fresh = true;   // still a draft until ✓ or it's closed
-      for (const d of n._refs || []) await addRef(n, d);   // images pasted before the note was first saved
-      delete n._refs;
       if (st.pending === n) { st.pending = null; st.sel = n.id; }
       if (!st.notes.includes(n)) st.notes.push(n);
       buildTimeline();
     } else {
-      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [] }));
+      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [], media: n.media || [] }));
       const lane = [...lanes.children].find((l) => l._note === n || l._note?.id === n.id);
       if (lane) lane.querySelector('.name').lastChild.textContent = n.text;
     }
@@ -837,7 +835,8 @@ function noteContext(n) {
     `Note: ${n.text}`,
     n.followUp ? `Follow-up on Claude's change: ${n.followUp}` : null,
     n.curve ? `Wanted easing: cubic-bezier(${n.curve.join(', ')})` : null,
-    n.useRefs?.length ? `Use these reference findings: ${n.useRefs.map((u) => `ref:${u.ref}/${u.slug || u.id} (${u.name})`).join(', ')}` : null,
+    n.useRefs?.length ? `Reference moments: ${n.useRefs.map((u) => `references/${u.ref}/moments/${u.id}/ (${u.name})`).join(', ')}` : null,
+    n.media?.length ? `Attached: ${n.media.map((m) => `${m.label} = ${m.path}`).join(', ')}` : null,
     n.region ? `Region (stage px): x ${n.region.x}, y ${n.region.y}, ${n.region.w}×${n.region.h}` : null,
     n.elements?.length ? `In the box (best match first): ${n.elements.map((e) => e.name + (e.text && e.text !== e.name ? ` “${e.text}”` : '')).join(', ')}` : null,
     n.beats?.length ? `Beats: ${n.beats.map((b) => `${b.name} (${b.f0}→${b.f1})`).join(', ')}` : null,
@@ -858,29 +857,45 @@ function miniCurve(c) {
   return svg;
 }
 
-// Reference images: paste (⌘V / Ctrl+V) while a note is open. No upload UI — just the clipboard.
-async function addRef(n, dataUrl) {
-  const note = await (await fetch(`/api/notes/${st.scene}/${n.id}/refs`, json('POST', { data: dataUrl }))).json();
-  n.refs = note.refs;
+// Media: files attached to a note, as A1, A2… (the note's text can talk about "A1"). Drop or paste a file onto the open
+// note, or pick one from the project's media library (your uploads and the references' videos) with "+ media". Files
+// are kept in <project>/media/; Claude copies what a scene uses into its assets.
+const upload = async (file) => {
+  const r = await fetch(`/api/media/upload?name=${encodeURIComponent(file.name || 'pasted.png')}`, { method: 'POST', body: file });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'upload failed');
+  return d;
+};
+const nextLabel = (n) => `A${Math.max(0, ...(n.media || []).map((m) => +String(m.label).slice(1) || 0)) + 1}`;
+function attach(n, item) {
+  if ((n.media || []).some((m) => m.id === item.id)) return;
+  const m = { label: nextLabel(n), id: item.id, name: item.name, kind: item.kind, url: item.url, path: item.path, from: item.from };
+  n.media = [...(n.media || []), m];
+  if (n !== st.pending && n.id) save(n, { media: n.media });
 }
-async function removeRef(n, r) {
-  if (r.d) n._refs = (n._refs || []).filter((d) => d !== r.d);
-  else { const note = await (await fetch(`/api/notes/${st.scene}/${n.id}/refs/${encodeURIComponent(r.f)}`, { method: 'DELETE' })).json(); n.refs = note.refs; }
-  renderPanel();
-}
-addEventListener('paste', async (e) => {
-  const n = st.pending || st.notes.find((x) => x.id === st.sel);
-  const files = [...(e.clipboardData?.items || [])].filter((it) => it.kind === 'file' && it.type.startsWith('image/')).map((it) => it.getAsFile());
-  if (!n || !files.length) return;            // plain text pastes behave as usual
-  e.preventDefault();
+async function attachFiles(n, files) {
   const keep = $('#panel textarea')?.value;
-  for (const f of files) {
-    const dataUrl = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); });
-    if (n.id) { await queue; await addRef(n, dataUrl); } else (n._refs = n._refs || []).push(dataUrl);
-  }
+  for (const f of files) { try { attach(n, await upload(f)); } catch (e) { alert(e.message); } }
   renderPanel();
   const ta = $('#panel textarea'); if (ta && keep != null) { ta.value = keep; ta.focus({ preventScroll: true }); }
+}
+const openNote = () => st.pending || st.notes.find((x) => x.id === st.sel);
+const upIcon = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10.5V2.5M4.75 5.75 8 2.5l3.25 3.25M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+addEventListener('paste', (e) => {
+  const n = openNote(), files = [...(e.clipboardData?.files || [])];
+  if (!n || !files.length) return;            // plain text pastes behave as usual
+  e.preventDefault(); attachFiles(n, files);
 });
+panel.addEventListener('dragover', (e) => { if (openNote() && [...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); panel.classList.add('dropping'); } });
+panel.addEventListener('dragleave', (e) => { if (!panel.contains(e.relatedTarget)) panel.classList.remove('dropping'); });
+panel.addEventListener('drop', (e) => {
+  panel.classList.remove('dropping');
+  const n = openNote(), files = [...(e.dataTransfer?.files || [])];
+  if (!n || !files.length) return;
+  e.preventDefault(); attachFiles(n, files);
+});
+const mediaThumb = (m) => m.kind === 'video' ? h('video', { src: `${m.url}#t=0.1`, muted: true, preload: 'metadata' })
+  : m.kind === 'font' ? h('span', { class: 'ph' }, 'Aa') : h('img', { src: m.url, alt: '' });
 
 const trash = `<svg width="15" height="15" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -901,7 +916,7 @@ function renderPanel() {
         if (!text.trim()) return;
         const range = it.range || null, frame = it.frame;
         const beats = st.beats.filter((b) => (range ? b.f1 >= range[0] && b.f0 <= range[1] : frame >= b.f0 && frame <= b.f1) && b.f1 > b.f0).map(({ name, f0, f1 }) => ({ name, f0, f1 }));
-        const note = await (await fetch('/api/notes', json('POST', { scene: st.scene, frame, range, region: it.region || null, text: text.trim(), followUp: it.text, beats, elements: it.elements || [], curve: null }))).json();
+        const note = await (await fetch('/api/notes', json('POST', { scene: st.scene, frame, range, region: it.region || null, text: text.trim(), followUp: it.text, beats, elements: it.elements || [], curve: null, useRefs: it.useRefs || [], media: it.media || [] }))).json();   // a reply keeps the references and files the change was built from
         await dropItem(it);
         st.replyTo = null;
         st.notes.push(note); st.sel = note.id; st.editing = false;
@@ -946,7 +961,9 @@ function renderPanel() {
   const head = h('div', { class: 'head' },
     h('span', { class: 'where' }, where(n)),
     h('div', { class: 'head-btns' },
-      processing(n)
+      st.scene?.startsWith('ref.')
+        ? h('button', { class: 'resolve save-moment', title: 'Save this moment (⌘↵): its frames and measurements are captured at once', onclick: () => saveMoment(n) }, '◆ Save')
+        : processing(n)
         ? h('span', { class: 'saved proc', title: 'Sent to Claude; it disappears when Claude has worked it' }, 'With Claude')
         : [n.id && n.text?.trim() && !editing ? h('span', { class: 'saved draft', title: 'Saved, not sent yet' }, 'Draft') : null,
            h('button', { class: 'resolve send', title: 'Send to Claude (⌘↵). Sends this and any other unsent notes on this scene', onclick: () => sendNote(n) }, '↑')],
@@ -955,32 +972,42 @@ function renderPanel() {
 
   if (n.followUp) panel.append(h('div', { class: 'followup' }, h('b', {}, 'Follow-up on: '), n.followUp));
   if (n.elements?.length) panel.append(h('div', { class: 'target' }, h('span', { class: 'muted' }, 'In the box: '), n.elements.slice(0, 3).map((e) => e.name).join(' · ')));
+  const isRef = st.scene?.startsWith('ref.'), sent = processing(n);
+  const rerender = () => { const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
+  const setUse = (list) => { save(n, { useRefs: list }); rerender(); };
+  const setCurve = (c) => { save(n, { curve: c }); st.curveOpen = !!c; const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
+
+  // the note box: the text and what's attached to it (files as A1, A2…; moments from references), in one box. Once sent,
+  // the box drops its border and the note reads as sent text
+  const box = h('div', { class: `composer ${editing ? 'editing' : sent ? 'sent' : 'draft'}` });
   if (editing) {
     const ta = h('textarea', {
-      value: n.text || '', placeholder: st.scene?.startsWith('ref.') ? 'What do you like about this moment?' : 'What should change here?  (⌘V pastes a reference image)',
+      value: n.text || '', placeholder: isRef ? 'Name this moment, or say what you like about it (optional)' : 'What should change here?  Drop or paste a file to attach it',
       oninput: (e) => save(n, { text: e.target.value }),
       onkeydown: (e) => {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendNote(n); }   // Enter alone is a new line
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); isRef ? saveMoment(n) : sendNote(n); }   // Enter alone is a new line
         if (e.key === 'Escape') { e.preventDefault(); dismissNote(); }   // closes; a note with text stays as a draft
       },
     });
-    panel.append(ta);
+    box.append(ta);
     requestAnimationFrame(() => { if (document.activeElement !== ta && st.focusText) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); st.focusText = false; } });
   } else {
-    panel.append(h('div', { class: 'text-view', title: 'Click to edit', onclick: () => { st.editing = true; st.focusText = true; renderPanel(); } }, n.text));
+    box.append(h('div', { class: 'text-view', title: sent ? 'Sent to Claude · click to edit' : 'Click to edit', onclick: () => { st.editing = true; st.focusText = true; renderPanel(); } }, n.text));
   }
+  const removable = !sent;
+  const chips = [
+    ...(n.media || []).map((m) => h('a', { class: 'att-chip', href: m.url, target: '_blank', title: `${m.label} · ${m.name}${m.from === 'reference' ? ' (a reference video)' : ''}` },
+      mediaThumb(m), h('b', {}, m.label), h('span', {}, m.name),
+      removable ? h('button', { class: 'x', title: 'Remove from this note', onclick: (e) => { e.preventDefault(); e.stopPropagation(); n.media = n.media.filter((x) => x !== m); if (n.id) save(n, { media: n.media }); rerender(); } }, '×') : null)),
+    ...(isRef ? [] : (n.useRefs || []).map((u) => h('span', { class: 'att-chip ref', title: `Reference moment: ${u.name}${u.refName ? ` · ${u.refName}` : ''}` },
+      h('span', { class: 'fmark' }, '◆'), h('span', {}, u.name),
+      removable ? h('button', { class: 'x', title: 'Remove', onclick: (e) => { e.stopPropagation(); setUse((n.useRefs || []).filter((x) => x !== u)); } }, '×') : null))),
+  ];
+  if (chips.length) box.append(h('div', { class: 'att-row' }, chips));
+  panel.append(box);
 
-  const refs = [...(n.refs || []).map((f) => ({ f, src: `/notes/${st.scene}/${f}` })), ...(n._refs || []).map((d) => ({ d, src: d }))];
-  if (refs.length) panel.append(h('div', { class: 'refs' }, ...refs.map((r) => {
-    const x = h('button', { class: 'x', title: 'Remove this reference', onclick: () => removeRef(n, r) }, '×');
-    return h('div', { class: 'ref' }, h('img', { src: r.src, title: 'Reference image (pasted with ⌘V)' }), x);
-  })));
-
-  const rerender = () => { const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
-  const isRef = st.scene?.startsWith('ref.');
-  const setUse = (list) => { save(n, { useRefs: list }); rerender(); };
-  const setCurve = (c) => { save(n, { curve: c }); st.curveOpen = !!c; const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
-  panel.append(h('div', { class: 'cues' },
+  // what can be added to the note, together in one row (hidden once it's with Claude)
+  if (!sent) panel.append(h('div', { class: 'cues' },
     n.curve
       ? h('button', { class: `cue ${st.curveOpen ? 'on' : ''}`, title: 'Easing you want — click to edit', onclick: () => { st.curveOpen = !st.curveOpen; renderPanel(); } },
           miniCurve(n.curve), `cubic-bezier(${n.curve.join(', ')})`)
@@ -990,19 +1017,24 @@ function renderPanel() {
           ? h('button', { class: 'cue', title: 'Remove the marked area', onclick: () => removeArea(n) }, '✕ area')
           : h('button', { class: `cue add ${st.comment ? 'on' : ''}`, title: 'Draw a box on the frame to mark an area for this span (S)', onclick: () => setComment(!st.comment) }, st.comment ? 'draw the area…' : '+ area'))
       : null,
-    // a film note can point at findings from references: Claude applies their motion and/or style here
-    ...(isRef ? [] : (n.useRefs || []).map((u) => h('button', { class: 'cue refc', title: `${u.summary || u.name} · click to open the reference`, onclick: () => window.open(`/editor/#${u.scene}@${u.frame ?? 0}`, '_blank') },
-      h('span', { class: 'fmark' }, '◆'), u.name,
-      h('span', { class: 'x', title: 'Remove', onclick: (e) => { e.stopPropagation(); setUse((n.useRefs || []).filter((x) => x !== u)); } }, '×')))),
-    isRef ? null : h('button', { class: `cue add ${st.refPick ? 'on' : ''}`, title: 'Use a finding from a reference: its motion and/or style', onclick: async () => { st.refPick = !st.refPick; if (st.refPick) st.allFindings = await (await fetch('/api/findings')).json(); rerender(); } }, '+ reference')));
-  if (!isRef && st.refPick) {
-    const list = (st.allFindings || []).filter((f) => !(n.useRefs || []).some((u) => u.ref === f.ref && u.id === f.id));
+    isRef ? null : h('button', { class: `cue add ${st.pick === 'ref' ? 'on' : ''}`, title: 'Point at a moment marked on a reference: Claude borrows its motion and/or look', onclick: async () => { st.pick = st.pick === 'ref' ? null : 'ref'; if (st.pick) st.allMoments = await (await fetch('/api/moments')).json(); rerender(); } }, '+ reference'),
+    isRef ? null : h('button', { class: `cue add ${st.pick === 'media' ? 'on' : ''}`, title: 'Attach a file from the media library, or upload one (you can also drop or paste files here)', onclick: async () => { st.pick = st.pick === 'media' ? null : 'media'; if (st.pick) st.allMedia = await (await fetch('/api/media')).json(); rerender(); } }, '+ media')));
+  if (!isRef && st.pick === 'ref') {
+    const list = (st.allMoments || []).filter((f) => !(n.useRefs || []).some((u) => u.ref === f.ref && u.id === f.id));
     panel.append(h('div', { class: 'f-pick' }, list.length ? list.map((f) => h('button', { class: 'f-item', onclick: () => {
-      st.refPick = false;
-      setUse([...(n.useRefs || []), { ref: f.ref, id: f.id, slug: f.slug || f.id, name: f.name, summary: f.summary, scene: f.scene, frame: f.range?.[0] ?? f.frame, captures: f.captures }]);
-    } }, f.keyFrames?.[0] ? h('img', { src: `${f.base}${f.keyFrames[0].file}?v=${f.v}` }) : h('span', { class: 'ph' }),
-      h('span', { class: 'tx' }, h('b', {}, f.name), h('span', { class: 'muted' }, `${f.refName} · ${(f.captures || []).join(' + ')}`), f.summary ? h('span', {}, f.summary) : null)))
-      : h('div', { class: 'muted' }, 'No findings yet. Add a reference (Motion Studio menu → References), note a moment on it and Send to Claude.')));
+      st.pick = null;
+      setUse([...(n.useRefs || []), { ref: f.ref, id: f.id, name: f.name, refName: f.refName, scene: f.scene, frame: f.range?.[0] ?? f.frame }]);
+    } }, f.stills?.[0] ? h('img', { src: `${f.base}${f.stills[0]}?v=${f.v}` }) : h('span', { class: 'ph' }),
+      h('span', { class: 'tx' }, h('b', {}, f.name), h('span', { class: 'muted' }, `${f.refName} · ${f.seconds ? f.seconds.toFixed(1) + 's' : ''}`), f.text && f.text !== f.name ? h('span', {}, f.text) : null)))
+      : h('div', { class: 'muted' }, 'No moments yet. Open References (R), add a video, and mark a moment on it.')));
+  }
+  if (!isRef && st.pick === 'media') {
+    const input = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { st.pick = null; attachFiles(n, [...input.files]); } });
+    const list = (st.allMedia || []).filter((m) => !(n.media || []).some((x) => x.id === m.id));
+    panel.append(h('div', { class: 'f-pick' }, input,
+      (() => { const b = h('button', { class: 'f-upload', title: 'Or drop a file on the note', onclick: () => input.click() }); b.innerHTML = upIcon; b.append('Upload a video, image or GIF'); return b; })(),
+      list.map((m) => h('button', { class: 'f-item', onclick: () => { st.pick = null; attach(n, m); rerender(); } }, mediaThumb(m),
+        h('span', { class: 'tx' }, h('b', {}, m.name), h('span', { class: 'muted' }, `${m.kind}${m.from === 'reference' ? ' · reference video' : ''}`))))));
   }
   if (n.curve && st.curveOpen) {
     const tokens = Object.entries(st.S.tokens?.ease || {});
@@ -1014,29 +1046,17 @@ function renderPanel() {
   if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, 'Claude'), n.reply));
 }
 
-// A finding (a studied moment of a reference), at a glance: what it is, a frame sequence you scrub with the pointer,
-// the motion as numbers and a curve, the style as swatches and type samples. The long notes and the code wait behind
-// the "Text spec" and "Code" chips.
-const FONTS = { fraunces: 'Fraunces', 'instrument-sans': 'Instrument Sans', inter: 'Inter', manrope: 'Manrope', 'bricolage-grotesque': 'Bricolage Grotesque', unbounded: 'Unbounded', 'big-shoulders-display': 'Big Shoulders Display' };
-const fontLoads = {};
-function sampleFont(name) {   // a font the studio ships, loaded for the "Aa" sample; else null
-  const slug = Object.keys(FONTS).find((k) => FONTS[k].toLowerCase() === String(name || '').toLowerCase());
-  if (!slug) return null;
-  fontLoads[slug] ||= new FontFace(`ms-${slug}`, `url(/vendor/@fontsource/${slug}/files/${slug}-latin-400-normal.woff2)`).load().then((ff) => document.fonts.add(ff)).catch(() => {});
-  return `ms-${slug}`;
-}
 function frameSeq(f) {
   const n = f.frames || 0, fps = f.fps || st.fps, pad = (i) => String(i).padStart(4, '0');
   const src = (i) => `${f.base}frames/f${pad(i)}.jpg?v=${f.v}`;
-  const keys = f.keyFrames || [];
-  const img = h('img', { src: n ? src(1) : (keys[0] ? `${f.base}${keys[0].file}?v=${f.v}` : ''), alt: '' });
+  const keys = (f.stills || []).map((file) => ({ file, frame: +file.match(/f(\d+)/)?.[1] || null }));
+  const img = h('img', { src: n ? src(1) : '', alt: '' });
   const fill = h('i', { class: 'fill' }), cap = h('span', { class: 'cap' });
-  const bar = h('div', { class: 'bar' }, fill, ...keys.filter((k) => k.frame && n).map((k) => h('b', { title: k.label, style: { left: `${((k.frame - 1) / Math.max(1, n - 1)) * 100}%` } })));
+  const bar = h('div', { class: 'bar' }, fill, ...keys.filter((k) => k.frame && n).map((k) => h('b', { style: { left: `${((k.frame - 1) / Math.max(1, n - 1)) * 100}%` } })));
   const show = (i) => {
     img.src = src(i);
     fill.style.width = `${((i - 1) / Math.max(1, n - 1)) * 100}%`;
-    const k = keys.find((x) => Math.abs((x.frame || -9) - i) <= 1);
-    cap.textContent = `f${i} · ${((i - 1) / fps).toFixed(2)}s${k ? ` · ${k.label}` : ''}`;
+    cap.textContent = `f${i} · ${((i - 1) / fps).toFixed(2)}s`;
   };
   let warm = false;
   const view = h('div', { class: 'view', title: n ? 'Move across to scrub every frame' : '' }, img, cap);
@@ -1046,60 +1066,49 @@ function frameSeq(f) {
     view.addEventListener('pointerleave', () => { view.classList.remove('scrub'); img.src = src(1); fill.style.width = '0'; cap.textContent = ''; });
   }
   const open = st.fOpen === 'keys';
-  const toggle = h('button', { class: `chip ${open ? 'on' : ''}`, onclick: () => { st.fOpen = open ? null : 'keys'; renderPanel(); } }, `Key frames ${keys.length}`);
+  const toggle = h('button', { class: `chip ${open ? 'on' : ''}`, onclick: () => { st.fOpen = open ? null : 'keys'; renderPanel(); } }, `Stills ${keys.length}`);
   const box = h('div', { class: 'f-seq' }, view, n ? bar : null,
     h('div', { class: 'meta' }, h('span', {}, n ? `▦ ${n} frames · ${(n / fps).toFixed(1)}s` : '▦ frames'), keys.length ? toggle : null));
-  if (open) box.append(h('div', { class: 'f-keys' }, keys.map((k) => h('a', { href: `${f.base}${k.file}`, target: '_blank', title: k.label },
-    h('img', { src: `${f.base}${k.file}?v=${f.v}`, loading: 'lazy' }), h('span', {}, k.frame != null ? `f${k.frame}` : '', k.label ? h('em', {}, k.label) : null)))));
+  if (open) box.append(h('div', { class: 'f-keys' }, keys.map((k) => h('a', { href: `${f.base}${k.file}`, target: '_blank', title: 'Open full size' },
+    h('img', { src: `${f.base}${k.file}?v=${f.v}`, loading: 'lazy' }), h('span', {}, k.frame ? `f${k.frame}` : '')))));
   return box;
 }
+// A moment marked on a reference: its frames to scrub and what was measured (no write-up: Claude reads the frames when
+// a film note uses it). Claude's notes from earlier studies, if any, sit behind a chip.
 function renderFinding(f) {
-  const del = h('button', { class: 'del', title: 'Delete this finding', onclick: async () => {
-    if (!confirm(`Delete the finding “${f.name || f.id}”? Its frames and measurements are removed.`)) return;
-    await fetch(`/api/findings/${f.ref}/${f.id}`, { method: 'DELETE' });
+  const del = h('button', { class: 'del', title: 'Delete this moment', onclick: async () => {
+    if (!confirm(`Delete the moment “${f.name}”? Its frames and measurements are removed.`)) return;
+    await fetch(`/api/moments/${f.ref}/${f.id}`, { method: 'DELETE' });
     st.selF = null; setRange(null); loadNotes();
   } });
   del.innerHTML = trash;
-  panel.append(h('div', { class: 'head' }, h('span', { class: 'where' }, where(f)), h('div', { class: 'head-btns' }, h('span', { class: 'saved found' }, '◆ Finding'), del)));
-  const caps = f.captures || [f.motion && 'motion', f.style && 'style'].filter(Boolean);
-  panel.append(h('div', { class: 'f-top' }, h('div', { class: 'f-title' }, f.name || 'Finding'), f.summary ? h('div', { class: 'f-sum' }, f.summary) : null,
-    h('div', { class: 'f-caps' }, caps.map((c) => h('span', { class: `f-cap ${c}` }, c === 'motion' ? '↝ Motion' : c === 'style' ? '◐ Style' : c)))));
+  const state = f.status === 'capturing' ? h('span', { class: 'saved proc' }, 'Capturing…') : f.status === 'failed' ? h('span', { class: 'saved', style: { color: 'var(--warn)' } }, 'Failed') : h('span', { class: 'saved found' }, '◆ Moment');
+  panel.append(h('div', { class: 'head' }, h('span', { class: 'where' }, where(f)), h('div', { class: 'head-btns' }, state, del)));
+  const name = h('input', { class: 'f-name', value: f.name || '', placeholder: 'Name this moment', spellcheck: false,
+    onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+    onblur: (e) => { const v = e.target.value.trim(); if (v && v !== f.name) { f.name = v; fetch(`/api/moments/${f.ref}/${f.id}`, json('PATCH', { name: v })).then(() => buildTimeline()); } } });
+  panel.append(h('div', { class: 'f-top' }, name, f.text && f.text !== f.name ? h('div', { class: 'f-sum' }, f.text) : null));
+  if (f.status === 'failed') { panel.append(h('div', { class: 'reply' }, f.error || 'The capture failed')); return; }
+  if (f.status === 'capturing') { panel.append(h('p', { class: 'muted hint' }, 'Cutting out the frames and measuring them… a few seconds.')); return; }
   panel.append(frameSeq(f));
-  const m = f.motion;
-  if (m) {
-    const stats = m.stats?.length ? m.stats : m.duration ? [{ label: 'Duration', value: m.duration }] : [];
-    panel.append(h('div', { class: 'f-sec' }, h('h4', {}, 'Motion'),
-      stats.length ? h('div', { class: 'f-stats' }, stats.map((x) => h('div', { class: 'stat' }, h('span', { class: 'l' }, x.label), h('b', {}, x.value), x.sub ? h('span', { class: 's' }, x.sub) : null))) : null,
-      m.ease ? h('div', { class: 'f-ease' }, m.ease.bezier ? miniCurve(m.ease.bezier) : null,
-        h('div', {}, h('b', {}, m.ease.token || 'custom ease'), m.ease.bezier ? h('code', {}, `[${m.ease.bezier.join(', ')}]`) : null)) : null));
+  const mv = f.move, stats = [{ label: 'Moment', value: `${(f.seconds || 0).toFixed(2)}s`, sub: `${f.frames} frames` }];
+  if (mv) {
+    stats.push({ label: 'Main move', value: `${mv.seconds}s`, sub: `${mv.studioFrames} f at 25 fps` });
+    if (mv.overshoot) stats.push({ label: 'Overshoot', value: `${Math.round(mv.overshoot.by * 100)}%` });
+    else if (mv.travel) stats.push({ label: 'Travel', value: `${mv.travel.px}px`, sub: mv.travel.direction });
   }
-  const y = f.style;
-  if (y) {
-    const type = (y.type || []).map((t) => typeof t === 'string' ? { name: t } : t);
-    panel.append(h('div', { class: 'f-sec' }, h('h4', {}, 'Style'),
-      y.palette?.length ? h('div', { class: 'f-pal' }, y.palette.map((c) => h('button', { class: 'sw', title: `${c.hex}${c.role ? ` · ${c.role}` : ''} (click to copy)`, style: { background: c.hex },
-        onclick: async (e) => { try { await navigator.clipboard.writeText(c.hex); } catch {} e.currentTarget.classList.add('copied'); const b = e.currentTarget; setTimeout(() => b.classList.remove('copied'), 900); } }))) : null,
-      type.length ? h('div', { class: 'f-type' }, type.map((t) => {
-        const fam = sampleFont(t.font);
-        const kind = t.kind || (/serif/i.test(`${t.name} ${t.font}`) && !/sans/i.test(`${t.name} ${t.font}`) ? 'serif' : 'sans');
-        return h('div', { class: 'tp', title: [t.name, t.spec].filter(Boolean).join(' · ') },
-          h('span', { class: 'aa', style: { fontFamily: fam ? `${fam}, ${kind === 'serif' ? 'Georgia, serif' : 'system-ui, sans-serif'}` : (kind === 'serif' ? 'Georgia, serif' : 'system-ui, sans-serif') } }, 'Aa'),
-          h('span', {}, h('b', {}, t.role || (t.name.split(/[:(,]/)[0])), t.font ? h('em', {}, t.font) : null));
-      })) : null));
+  panel.append(h('div', { class: 'f-sec' }, h('h4', {}, 'Measured'),
+    h('div', { class: 'f-stats' }, stats.map((x) => h('div', { class: 'stat' }, h('span', { class: 'l' }, x.label), h('b', {}, x.value), x.sub ? h('span', { class: 's' }, x.sub) : null))),
+    mv?.ease ? h('div', { class: 'f-ease' }, mv.ease.bezier ? miniCurve(mv.ease.bezier) : null,
+      h('div', {}, h('b', {}, mv.ease.nearestToken || 'custom ease'), h('code', {}, `[${mv.ease.bezier.join(', ')}] · ${mv.shape}`))) : h('div', { class: 'muted' }, f.moves ? '' : 'No single clear move: a texture, a shimmer or several things at once. Claude reads the frames.'),
+    f.palette?.length ? h('div', { class: 'f-pal' }, f.palette.slice(0, 10).map((c) => h('button', { class: 'sw', title: `${c.hex} · ${Math.round(c.share * 100)}% (click to copy)`, style: { background: c.hex },
+      onclick: async (e) => { try { await navigator.clipboard.writeText(c.hex); } catch {} const b = e.currentTarget; b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 900); } }))) : null));
+  if (f.study) {
+    const st2 = f.study, list = (title, items) => items?.length ? h('div', {}, h('h5', {}, title), h('ul', {}, items.map((t) => h('li', {}, typeof t === 'string' ? t : [t.role, t.name, t.spec].filter(Boolean).join(' · '))))) : null;
+    panel.append(h('div', { class: 'f-more' }, h('button', { class: `chip ${st.fOpen === 'study' ? 'on' : ''}`, onclick: () => { st.fOpen = st.fOpen === 'study' ? null : 'study'; renderPanel(); } }, '▤ Earlier study')));
+    if (st.fOpen === 'study') panel.append(h('div', { class: 'f-drawer' }, st2.summary ? h('div', {}, st2.summary) : null,
+      list('Motion', st2.motion?.points), list('Type', st2.style?.type), list('Style', st2.style?.points)));
   }
-  // the detail, on demand
-  const drawer = (key, label) => h('button', { class: `chip ${st.fOpen === key ? 'on' : ''}`, onclick: () => { st.fOpen = st.fOpen === key ? null : key; renderPanel(); } }, label);
-  const handle = `ref:${f.ref}/${f.slug || f.id}`;
-  const copy = h('button', { class: 'chip ghost', title: 'Copy the handle, to name this finding in a note', onclick: async (e) => { try { await navigator.clipboard.writeText(handle); } catch {} e.currentTarget.textContent = 'Copied ✓'; } }, `⧉ ${handle}`);
-  panel.append(h('div', { class: 'f-more' }, drawer('spec', '▤ Text spec'), m?.build ? drawer('code', '</> Code') : null, copy));
-  const list = (title, items) => items?.length ? h('div', {}, h('h5', {}, title), h('ul', {}, items.map((t) => h('li', {}, t)))) : null;
-  if (st.fOpen === 'spec') panel.append(h('div', { class: 'f-drawer' },
-    f.ask ? h('div', { class: 'followup' }, h('b', {}, 'You asked: '), f.ask) : null,
-    list('Motion', m?.points),
-    list('Type', (y?.type || []).map((t) => typeof t === 'string' ? t : [t.role, t.name, t.spec].filter(Boolean).join(' · '))),
-    list('Colours', (y?.palette || []).filter((c) => c.role).map((c) => `${c.hex} · ${c.role}`)),
-    list('Style', y?.points)));
-  if (st.fOpen === 'code' && m?.build) panel.append(h('pre', { class: 'f-code' }, m.build));
 }
 
 // cubic-bezier editor (the value graph only); y may leave 0..1 (anticipation / overshoot)
@@ -1241,10 +1250,24 @@ async function sendToClaude() {
   setTimeout(() => { b.textContent = '▶ Send to Claude'; b.classList.remove('on'); }, 4000);
   loadNotes();   // the sent notes turn to "With Claude"
 }
+// On a reference, a note is a moment to keep: saved at once (frames and measurements captured in the background); the
+// note itself goes away and the moment's green bar takes its place
+async function saveMoment(n) {
+  clearTimeout(saveTimer);
+  await queue;
+  const r = await fetch(`/api/moments/${st.scene.slice(4)}`, json('POST', { range: n.range, frame: n.frame, region: n.region, text: n.text || '' }));
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error || 'Couldn’t save the moment'); return; }
+  const m = await r.json();
+  if (n.id) await fetch(`/api/notes/${st.scene}/${n.id}`, { method: 'DELETE' });
+  st.notes = st.notes.filter((x) => x !== n); st.pending = null; st.sel = null; st.editing = false; st.selF = m.id;
+  document.activeElement?.blur?.();   // out of the text box, so the panel can switch to the moment
+  await loadNotes();
+}
 async function sendNote(n) {
   clearTimeout(saveTimer);
   if (!n.text?.trim()) return;
-  delete n._fresh; st.editing = false;
+  delete n._fresh; st.editing = false; st.pick = null;
+  document.activeElement?.blur?.();   // out of the text box, so the panel redraws as sent
   await persist(n);
   await sendToClaude();
 }

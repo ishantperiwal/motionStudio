@@ -1,15 +1,15 @@
-// References: someone else's video, kept in the project so Claude can study how a moment of it moves and build
-// something that moves the same way. A reference opens in the editor as a scene (id `ref.<id>`): you mark moments
-// with ordinary notes (a span, a box, a line about what you like) and press Send to Claude; Claude then runs
-// `npm run ref -- <id>`, which cuts out each noted moment and measures it.
+// References: someone else's video, kept in the project to borrow how a moment of it moves and looks. A reference
+// opens in the editor (inside the References panel) as a scene with id `ref.<id>`. You mark a moment on it (a span,
+// optionally a box and a name) and it is saved straight away: cut out and measured here, no AI involved. Claude reads a
+// moment's frames and measurements later, when a film note uses it, with that note's request in mind.
 // <project>/references/<id>/
 //   ref.json        what it is: source (link or file), status, the video's size, frame rate and length
 //   source.webm     the whole video (VP9: the render browser can't play H.264), played by the reference's scene page
-//   findings/<note id>/  one studied moment: clip.mp4, frames/f0001.jpg… (cropped to the box), stills/fNNNN.jpg
-//                   (full resolution, at the key frames), sheet.png, context.png, motion.json (moves, timing, travel,
-//                   overshoot, a fitted easing and the nearest token), style.json (the measured colour palette), and
-//                   finding.json: Claude's conclusion (motion and/or style, key frames), shown on the timeline
-// Statuses: downloading → converting → ready; or failed.
+//   moments/<id>/   one marked moment: moment.json (name, what you wrote, span, box, status), clip.mp4,
+//                   frames/f0001.jpg… (every frame, cropped to the box), stills/fNNNN.jpg (full resolution, key frames),
+//                   sheet.png, context.png, motion.json (moves, timing, travel, overshoot, a fitted easing and the
+//                   nearest token), style.json (the measured colour palette); study.json if Claude kept extra notes
+// Statuses: downloading → converting → ready; or failed. A moment: capturing → ready; or failed.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -79,36 +79,69 @@ export async function listRefs() {
     if (!ref) continue;
     // ?v= the file's time: a re-made file never shows the browser's cached copy of the old one
     const has = (f) => { try { return `/references/${d.name}/${f}?v=${Math.round(fs.statSync(path.join(dirOf(d.name), f)).mtimeMs)}`; } catch { return null; } };
-    out.push({ ...ref, scene: PREFIX + d.name, files: { source: has('source.webm') }, findings: (await listFindings(d.name)).length });
+    out.push({ ...ref, scene: PREFIX + d.name, files: { source: has('source.webm') }, moments: (await listMoments(d.name)).length });
   }
   return out.sort((a, b) => b.created.localeCompare(a.created));
 }
-// ---------------------------------------------------------------------------------------------- findings
-// A finding is a studied moment: its folder plus the finding.json Claude wrote. Paths in it (keyFrames) are relative
-// to the folder; `base` is the folder's URL.
-export async function listFindings(id) {
-  const fdir = path.join(dirOf(id), 'findings');
-  if (!fs.existsSync(fdir)) return [];
+// ---------------------------------------------------------------------------------------------- moments
+const momentsDir = (id) => path.join(dirOf(id), 'moments');
+const readJSON = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+// what the editor shows for a moment: its record, the measured numbers (the main move and the palette) and its stills
+export async function listMoments(id) {
+  const mdir = momentsDir(id);
+  if (!fs.existsSync(mdir)) return [];
   const out = [];
-  for (const d of await fsp.readdir(fdir, { withFileTypes: true })) {
+  for (const d of await fsp.readdir(mdir, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
-    const file = path.join(fdir, d.name, 'finding.json');
-    let f; try { f = JSON.parse(await fsp.readFile(file, 'utf8')); } catch { continue; }
-    let frames = 0; try { frames = fs.readdirSync(path.join(fdir, d.name, 'frames')).filter((x) => x.endsWith('.jpg')).length; } catch {}
-    let fps = null; try { fps = JSON.parse(fs.readFileSync(path.join(fdir, d.name, 'motion.json'), 'utf8')).fps; } catch {}
-    out.push({ ...f, id: d.name, ref: id, base: `/references/${id}/findings/${d.name}/`, v: Math.round(fs.statSync(file).mtimeMs), frames, fps });   // frames/: every frame, for scrubbing
+    const dir = path.join(mdir, d.name), m = readJSON(path.join(dir, 'moment.json'));
+    if (!m) continue;
+    const motion = readJSON(path.join(dir, 'motion.json')), style = readJSON(path.join(dir, 'style.json'));
+    let frames = 0; try { frames = fs.readdirSync(path.join(dir, 'frames')).filter((x) => x.endsWith('.jpg')).length; } catch {}
+    const main = motion?.moves?.length ? [...motion.moves].sort((p, q) => q.frames - p.frames)[0] : null;   // the longest move
+    out.push({
+      ...m, id: d.name, ref: id, base: `/references/${id}/moments/${d.name}/`, v: Math.round(fs.statSync(path.join(dir, 'moment.json')).mtimeMs),
+      frames, fps: motion?.fps || null, seconds: motion ? motion.frames / motion.fps : null,
+      move: main && { seconds: main.seconds, studioFrames: main.studioFrames, ease: main.ease, overshoot: main.overshoot, travel: main.travel, fastestAt: main.fastestAt, shape: main.shape },
+      moves: motion?.moves?.length || 0, palette: style?.palette || [], stills: style?.stills || [], study: readJSON(path.join(dir, 'study.json')),
+    });
   }
   return out.sort((a, b) => (a.range?.[0] ?? a.frame) - (b.range?.[0] ?? b.frame));
 }
-// every finding in the project, for a film note's "+ reference"
-export async function allFindings() {
+// every moment in the project, for a film note's "+ reference"
+export async function allMoments() {
   const out = [];
-  for (const r of await listRefs()) for (const f of await listFindings(r.id)) out.push({ ...f, refName: r.name || r.id, scene: r.scene });
+  for (const r of await listRefs()) for (const m of await listMoments(r.id)) if (m.status === 'ready') out.push({ ...m, refName: r.name || r.id, scene: r.scene });
   return out;
 }
-export async function deleteFinding(id, fid) {
-  if (!/^[\w.-]+$/.test(fid)) return;
-  await fsp.rm(path.join(dirOf(id), 'findings', fid), { recursive: true, force: true });
+// mark a moment: saved at once, then cut out and measured in the background (status capturing → ready)
+export async function addMoment(id, { range, frame, region, text, name }) {
+  const ref = await readRef(id);
+  if (!ref || ref.status !== 'ready') throw new Error('this reference isn\'t ready');
+  const { fps, duration } = ref.video;
+  const [f0, f1] = range?.length === 2 ? range : [frame - Math.round(fps / 2), frame + Math.round(fps / 2)];
+  const created = new Date().toISOString();
+  const mid = `${created.replace(/[:.]/g, '-').slice(0, 19)}-${slug(name || text || 'moment')}`;
+  const dir = path.join(momentsDir(id), mid);
+  const m = { name: (name || '').trim() || (text || '').trim().split(/[.\n]/)[0].slice(0, 48) || `Moment at ${(f0 / fps).toFixed(1)}s`,
+    text: (text || '').trim(), frame: f0, range: [f0, f1], region: region || null, created, status: 'capturing' };
+  await fsp.mkdir(dir, { recursive: true });
+  const write = (x) => fsp.writeFile(path.join(dir, 'moment.json'), JSON.stringify(x, null, 2) + '\n');
+  await write(m);
+  capture(ref, { dir, inS: Math.max(0, f0 / fps), outS: Math.min(duration, (f1 + 1) / fps), region: m.region })
+    .then(() => write({ ...m, status: 'ready' }), (e) => write({ ...m, status: 'failed', error: e.message }));
+  return { ...m, id: mid };
+}
+export async function updateMoment(id, mid, change) {
+  if (!/^[\w.-]+$/.test(mid)) return null;
+  const file = path.join(momentsDir(id), mid, 'moment.json'), m = readJSON(file);
+  if (!m) return null;
+  for (const k of ['name', 'text']) if (typeof change[k] === 'string') m[k] = change[k].trim();
+  await fsp.writeFile(file, JSON.stringify(m, null, 2) + '\n');
+  return m;
+}
+export async function deleteMoment(id, mid) {
+  if (!/^[\w.-]+$/.test(mid)) return;
+  await fsp.rm(path.join(momentsDir(id), mid), { recursive: true, force: true });
 }
 
 // the editor's scene picker lists ready references after the films
@@ -214,31 +247,9 @@ async function convert(id, file) {
 
 export async function deleteRef(id) { await fsp.rm(dirOf(id), { recursive: true, force: true }); }
 
-// ---------------------------------------------------------------------------------------------- study: the noted moments
-// Every open note on the reference's scene (notes/ref.<id>/) is a moment to study: its span (or ±½ s around a single
-// frame), its box and its text. Each is cut out and measured into findings/<note id>/ (Claude then adds finding.json).
-export async function studyNotes(id) {
-  const ref = await readRef(id);
-  if (!ref) throw new Error(`no reference "${id}"`);
-  if (ref.status !== 'ready') throw new Error(`"${id}" isn't ready yet (${ref.status})`);
-  const ndir = path.join(PROJECT, 'notes', PREFIX + id);
-  const files = fs.existsSync(ndir) ? (await fsp.readdir(ndir)).filter((f) => f.endsWith('.json') && !f.startsWith('_')) : [];
-  const notes = (await Promise.all(files.map(async (f) => { try { return JSON.parse(await fsp.readFile(path.join(ndir, f), 'utf8')); } catch { return null; } })))
-    .filter((n) => n && !n.reply).sort((a, b) => a.created.localeCompare(b.created));
-  const { fps, duration } = ref.video, out = [];
-  for (const n of notes) {
-    const [f0, f1] = n.range || [n.frame - fps / 2, n.frame + fps / 2];
-    const inS = Math.max(0, f0 / fps), outS = Math.min(duration, (f1 + 1) / fps);
-    const dir = path.join(dirOf(id), 'findings', n.id);
-    await capture(ref, { dir, inS, outS, region: n.region || null });
-    const read = async (f) => JSON.parse(await fsp.readFile(path.join(dir, f), 'utf8'));
-    out.push({ note: n, dir, motion: await read('motion.json'), style: await read('style.json') });
-  }
-  return { ref, moments: out };
-}
-
 export async function capture(ref, { dir, inS, outS, region }) {
-  await fsp.rm(dir, { recursive: true, force: true }); await fsp.mkdir(dir, { recursive: true });
+  await fsp.mkdir(dir, { recursive: true });   // (moment.json in the folder stays; what a capture makes is replaced)
+  for (const f of ['frames', 'stills', 'clip.mp4', 'sheet.png', 'context.png', 'motion.json', 'style.json']) await fsp.rm(path.join(dir, f), { recursive: true, force: true });
   const base = dirOf(ref.id);
   const moment = [inS, outS];   // in the reference's own time, for motion.json
   let src = path.join(base, 'source.webm'), vw = ref.video.w, vh = ref.video.h, srcFps = ref.video.fps, tmp = null;

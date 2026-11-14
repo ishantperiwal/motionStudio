@@ -7,7 +7,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { ROOT, PROJECT } from './project.mjs';
-import { listRefs, listRefScenes, scenePage, addLink, addFile, deleteRef, safeRefId, hasYtDlp, PREFIX, listFindings, allFindings, deleteFinding } from './refs.mjs';
+import { listRefs, listRefScenes, scenePage, addLink, addFile, deleteRef, safeRefId, hasYtDlp, PREFIX, listMoments, allMoments, addMoment, updateMoment, deleteMoment } from './refs.mjs';
+import { listMedia, addMedia, deleteMedia } from './media.mjs';
 
 // The browser for capturing frames: Playwright's own Chromium (npx playwright install chromium), never the user's Google
 // Chrome app. A hidden instance of the real Chrome app takes its place on macOS: with the user's Chrome closed, clicking
@@ -19,7 +20,7 @@ export { ROOT, PROJECT };   // the studio (tool) and the project (its scenes/, n
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.webm': 'video/webm', '.md': 'text/plain; charset=utf-8', '.map': 'application/json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.jpeg': 'image/jpeg', '.avif': 'image/avif', '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.md': 'text/plain; charset=utf-8', '.map': 'application/json',
 };
 
 const inside = (base, p) => { const r = path.resolve(base, '.' + p); return r.startsWith(base + path.sep) || r === base ? r : null; };
@@ -285,15 +286,25 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         await fsp.rm(path.join(PROJECT, 'notes', PREFIX + id), { recursive: true, force: true });   // its notes go with it
         return send(res, 200, { ok: true });
       }
-      // findings: studied moments of a reference (?ref=<id>), or every one in the project (a film note's "+ reference")
-      if (p === '/api/findings' && req.method === 'GET') {
+      // moments marked on a reference (?ref=<id>), or every one in the project (a film note's "+ reference")
+      if (p === '/api/moments' && req.method === 'GET') {
         const id = url.searchParams.get('ref');
-        return send(res, 200, id ? (safeRefId(id) ? await listFindings(id) : []) : await allFindings());
+        return send(res, 200, id ? (safeRefId(id) ? await listMoments(id) : []) : await allMoments());
       }
-      if ((m = p.match(/^\/api\/findings\/([\w-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
-        if (safeRefId(m[1])) await deleteFinding(m[1], m[2]);
-        return send(res, 200, { ok: true });
+      if ((m = p.match(/^\/api\/moments\/([\w-]+)$/)) && req.method === 'POST') {   // mark one: saved now, measured in the background
+        if (!safeRefId(m[1])) return send(res, 404, { error: 'no such reference' });
+        try { return send(res, 200, await addMoment(m[1], await readBody(req))); } catch (e) { return send(res, 400, { error: e.message }); }
       }
+      if ((m = p.match(/^\/api\/moments\/([\w-]+)\/([\w.-]+)$/)) && safeRefId(m[1])) {
+        if (req.method === 'PATCH') return send(res, 200, await updateMoment(m[1], m[2], await readBody(req)));
+        if (req.method === 'DELETE') { await deleteMoment(m[1], m[2]); return send(res, 200, { ok: true }); }
+      }
+      // the media library: files to use in films or point at in notes
+      if (p === '/api/media' && req.method === 'GET') return send(res, 200, await listMedia());
+      if (p === '/api/media/upload' && req.method === 'POST') {
+        try { return send(res, 200, await addMedia(req, url.searchParams.get('name'))); } catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if ((m = p.match(/^\/api\/media\/([^/]+)$/)) && req.method === 'DELETE') { await deleteMedia(m[1]); return send(res, 200, { ok: true }); }
       if ((m = p.match(/^\/scenes\/ref\.([\w-]+)\/(index\.html)?$/))) {   // a reference's scene page
         const html = safeRefId(m[1]) && await scenePage(m[1]);
         return html ? send(res, 200, html, 'text/html; charset=utf-8') : send(res, 404, 'not ready', 'text/plain');
@@ -387,29 +398,6 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         shot(base, note);   // async; the crop appears beside the note
         return send(res, 200, note);
       }
-      // Reference images pasted into a note (⌘V): saved beside it as <id>.ref-N.<ext> and listed in note.refs
-      if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)\/refs(?:\/([\w.-]+))?$/))) {
-        const file = path.join(PROJECT, 'notes', m[1], `${m[2]}.json`);
-        const note = await readJSON(file, null);
-        if (!note) return send(res, 404, { error: 'no such note' });
-        note.refs = note.refs || [];
-        if (req.method === 'POST') {
-          const { data } = await readBody(req);
-          const mm = /^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/s.exec(data || '');
-          if (!mm) return send(res, 400, { error: 'expected an image data URL' });
-          const ext = mm[1] === 'jpeg' ? 'jpg' : mm[1];
-          let k = note.refs.length + 1;
-          while (note.refs.some((r) => r.startsWith(`${m[2]}.ref-${k}.`))) k++;
-          const name = `${m[2]}.ref-${k}.${ext}`;
-          await fsp.writeFile(path.join(PROJECT, 'notes', m[1], name), Buffer.from(mm[2], 'base64'));
-          note.refs.push(name);
-        } else if (req.method === 'DELETE' && safeId(m[3])) {
-          await fsp.rm(path.join(PROJECT, 'notes', m[1], m[3]), { force: true });
-          note.refs = note.refs.filter((r) => r !== m[3]);
-        }
-        await writeJSON(file, note);
-        return send(res, 200, note);
-      }
       if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
         const note = await readJSON(path.join(PROJECT, 'notes', m[1], `${m[2]}.json`), null);
         for (const r of note?.refs || []) if (safeId(r)) await fsp.rm(path.join(PROJECT, 'notes', m[1], r), { force: true });
@@ -431,7 +419,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/') { res.writeHead(302, { Location: '/editor/' }); return res.end(); }
       // the project's own folders come from the project; everything else (editor, runtime, themes, …) from the studio
       let file = p.startsWith('/vendor/') ? inside(path.join(ROOT, 'node_modules'), p.slice(7))
-        : inside(/^\/(scenes|notes|out|references)(\/|$)/.test(p) ? PROJECT : ROOT, p);
+        : inside(/^\/(scenes|notes|out|references|media)(\/|$)/.test(p) ? PROJECT : ROOT, p);
       if (!file) return send(res, 403, 'forbidden', 'text/plain');
       if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
       if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
@@ -452,14 +440,14 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
 
   if (watch) {
     let timer = null, changed = new Set();
-    for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes', 'references']) {
-      const abs = path.join(['scenes', 'notes', 'references'].includes(dir) ? PROJECT : ROOT, dir);
+    for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes', 'references', 'media']) {
+      const abs = path.join(['scenes', 'notes', 'references', 'media'].includes(dir) ? PROJECT : ROOT, dir);
       fs.mkdirSync(abs, { recursive: true });
       fs.watch(abs, { recursive: true }, (_, f) => {
         if (!f || /(^|\/)\.|~$/.test(f)) return;
-        if (dir === 'references' && !/(^|\/)(ref|finding)\.json$/.test(f)) return;   // not every frame file being written
+        if (dir === 'references' && !/(^|\/)(ref|moment)\.json$/.test(f)) return;   // not every frame file being written
         changed.add(`${dir}/${f}`);
-        if (!['notes', 'editor', 'references'].includes(dir)) sceneVersion++;   // scene, runtime or tokens changed: playback frames are stale
+        if (!['notes', 'editor', 'references', 'media'].includes(dir)) sceneVersion++;   // scene, runtime or tokens changed: playback frames are stale
         clearTimeout(timer);
         timer = setTimeout(() => { broadcast({ type: 'change', paths: [...changed] }); changed = new Set(); }, 60);
       });

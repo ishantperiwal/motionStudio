@@ -22,12 +22,13 @@ folder; when none is set they live inside the studio folder, as below. See [Proj
   a live `demo/` scene and a kit in `runtime/kits/` (e.g. `construct-reveal` → `construct.js`).
 - `tokens/motion.json` — named eases and durations (`move`, `settle`, `overshoot`, …).
 - `notes/<scene>/<id>.json` (+ `<id>.png` crop) — feedback queue.
-- `references/<id>/` — other people's videos, opened in the editor as scenes `ref.<id>` to note the moments to study
-  (see [References](#references)). Per project.
+- `references/<id>/` — other people's videos and the moments marked on them (see [References](#references)).
+  `media/` — the project's media library: files to use in films or attach to notes. Both per project.
 - `render/render.mjs`, `render/probe.mjs` — rendering and motion analysis.
 - `editor/` — the editor UI. `server/dev.mjs` — dev server (`npm run dev`, port 5173).
 - `server/project.mjs` — where the project folder is (the one setting below). `server/refs.mjs` — references: download,
-  their scene page, frames and measurements (`npm run ref`); the gallery is `editor/references.html`.
+  their scene page, moments and measurements (`npm run ref`); `server/media.mjs` — the media library; the panel is
+  `editor/references.html` (References and Files tabs).
 
 ## Project folder
 Recommended layout: one studio copy per project, next to a folder holding that project's films:
@@ -46,7 +47,7 @@ The first `new-scene` in a project folder outside the studio creates the folder 
 `RUN-STUDIO.md`: that project's own commands for the studio, the notes watcher and renders (never overwritten).
 
 Unset, the project is the studio folder itself. A relative `--project` / `MOTION_PROJECT` is from where you typed the
-command. The dev server serves `/scenes/`, `/notes/`, `/out/` and `/references/` from the project and everything else (`/runtime/`,
+command. The dev server serves `/scenes/`, `/notes/`, `/out/`, `/references/` and `/media/` from the project and everything else (`/runtime/`,
 `/vendor/`, `/editor/`, `/themes/`, `/techniques/`, `/tokens/`) from the studio, so scenes keep using absolute
 `/runtime/` and `/vendor/` paths and relative paths for their own files. In this file, `scenes/`, `notes/` and `out/`
 mean the project's. Check which project a running studio uses in its startup line (`… (project: <dir>)`).
@@ -77,13 +78,20 @@ mean the project's. Check which project a running studio uses in its startup lin
 1. Read the notes: `notes/<scene>/*.json`, oldest first; skip ones that already have a `reply`
    unless asked. Always look at the crop `<id>.png` before acting, not just the JSON: it is often the only
    evidence of what they mean (spot notes on blank areas have empty `elements`), and reading the text alone
-   leads to misreadings. Also open every image listed in `refs` — reference
-   images the person pasted into the note (⌘V) to show the style or result they want. A note gives `frame` or `range`, `text`, `region`
+   leads to misreadings. A note gives `frame` or `range`, `text`, `region`
    (stage px), `elements` (data-names / text in the box, best match first — a tight box puts the element
    they mean at the top), `beats` (names in `scene.js`) and
    optionally `curve` — a cubic-bezier the person picked to show the easing they want; apply it
-   exactly unless the text says otherwise — and optionally `useRefs`: findings from references to apply here (see
-   [References](#references)). Notes on a `ref.<id>` scene are references to study, not changes: see References.
+   exactly unless the text says otherwise. Optionally also:
+   - `media`: files attached as `A1`, `A2`… (`[{ label, name, kind, path, from }]`; `path` is relative to the
+     project). The text says what each is for, e.g. "use A1 as the base footage" or "make it look like A2". Open
+     images to look at them; for a video, grab a few frames (`ffmpeg -ss <t> -i <path> -frames:v 1 …`). **To use
+     one in a scene, copy it into `scenes/<scene>/assets/`** (never point a scene at `media/` or `references/`):
+     images, GIFs, SVGs and fonts as they are; a video converted to WebM (`ffmpeg -i <path> -an -c:v libvpx-vp9
+     -crf 30 -b:v 0 -g <fps> assets/<name>.webm`), then played frame by frame (seek it in `s.onFrame` and hand the
+     seek to `s.waitFor`, as the reference scene page does in `server/refs.mjs`). `from: "reference"` files are
+     someone else's videos; using them as footage is the person's call (stock and experiments): do it when asked.
+   - `useRefs`: moments marked on references to borrow from (see [References](#references)).
    Notes show as "With Claude" in the editor from Send until you delete them (or reply).
 2. Find the beat(s) in `scenes/<scene>/scene.js` and make the smallest change that does what the
    note says.
@@ -94,9 +102,9 @@ mean the project's. Check which project a running studio uses in its startup lin
    - only when the change is about motion: `npm run probe -- <scene> "<data-name>" --range a-b` for
      speed curves (no unintended hard stops, abrupt starts or jumps), or `--sheet a-b:step` for a
      contact sheet across the beat.
-4. Once a note is done, delete it (`<id>.json`, `<id>.png` and its `refs` files), add a 1–2 line item to
-   `notes/<scene>/_checklist.json` (`{ items: [{ id, frame, range?, region?, text }] }` — copy
-   frame/range/region from the note) saying what changed and where to look, and tell the person in chat. They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
+4. Once a note is done, delete it (`<id>.json` and `<id>.png`; attached media stays in the library), add a 1–2 line
+   item to `notes/<scene>/_checklist.json` (`{ items: [{ id, frame, range?, region?, text, useRefs?, media? }] }` —
+   copy frame/range/region, and `useRefs`/`media` if the note had them, so a reply keeps them) saying what changed and where to look, and tell the person in chat. They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
    with `followUp` set to the item's text (treat it as feedback on that change).
    If you could not do a note, leave it and put your question in `"reply"` instead.
 Whenever you start the studio (`npm run dev`), also start the watcher for the same project (see RUN-STUDIO.md):
@@ -107,67 +115,35 @@ scene are references to study: see [References](#references)).
 The dev server live-reloads the editor when scene files or notes change.
 
 ## References
-A reference is someone else's video whose motion and/or look the person wants in their film. They add it on the
-References page (Motion Studio menu → References: paste a link, downloaded with `yt-dlp`, or drop a video file) and
-open it from that panel in its own editor (the panel shows `/editor/?embed#ref.<id>`; the main window only shows
-films), where it is a scene with id `ref.<id>`. There they leave ordinary notes on it: a span over the
-moment, optionally a box around what matters, and a line saying what they want from it ("copy the style and the
-motion of this", "just how the cards land"). Then Send to Claude, as for any scene.
+A reference is someone else's video whose motion and/or look the person wants in a film. They add it in the
+References panel (Motion Studio menu → References, or **R**: paste a link, downloaded with `yt-dlp`, or drop a file)
+and open it there in its own editor (a scene with id `ref.<id>`). On it they **mark moments**: a span, optionally a box
+and a name or a line about it, then **◆ Save**. A moment is saved and measured at once by the studio (no Claude step):
+`references/<id>/moments/<moment id>/` holds `moment.json` (name, text, span, box), `clip.mp4`, `frames/f0001.jpg…`
+(every frame, cropped to the box plus a margin), `stills/fNNNN.jpg` (full resolution, at the key frames), `sheet.png`
+(the cropped frames labelled; orange = moving), `context.png` (start, middle, end; box drawn), `motion.json` (per move:
+frames, seconds, `studioFrames` at 25 fps, fastest point, travel, overshoot, a fitted cubic-bezier, the nearest token
+in `tokens/motion.json`) and `style.json` (the measured colour palette). Older moments may also have `study.json`, notes
+from an earlier way of working: useful, but the frames come first.
 
-**Notes on a `ref.<id>` scene are moments to study, not changes to make.** Each becomes a *finding*: a conclusion
-that shows on the reference's timeline (a green bar; click it for its key frames, motion and style) and that film
-notes can point at. For `NOTES SENT · scene=ref.<id>`:
-1. Run `npm run ref -- <id>`. For every open note it cuts the moment out into `references/<id>/findings/<note id>/`:
-   `clip.mp4`; `frames/f0001.jpg…` (every frame, cropped to the box plus a margin, small); `stills/fNNNN.jpg` (full
-   resolution, whole picture, at the key frames: start, end, each move's start, fastest frame and landing, a few in
-   between); `sheet.png` (the cropped frames labelled; orange = moving); `context.png` (start, middle, end, box drawn);
-   `motion.json` (per move: frames, seconds, `studioFrames` at 25 fps, fastest point, travel, overshoot, a fitted
-   cubic-bezier, the nearest token in `tokens/motion.json`); `style.json` (the measured colour palette of the area).
-2. Read what the note asks for: **motion**, **style**, or both (when it doesn't say, both). Look at the note's crop
-   (`notes/ref.<id>/<note id>.png`), `context.png`, `sheet.png` and the stills, then the numbers. Measurements are
-   approximate and merge things that move at once inside the box: trust your eyes on the frames, use the numbers for
-   timing, easing and colours. For style, study the full-resolution stills: colours and their roles, type (family or
-   the closest match, weight, size relative to the frame, tracking, case), shapes (corner radius, strokes), depth
-   (shadows, blur, gradients, glass), layout and spacing, texture, how things enter and leave the frame.
-3. Write `finding.json` in that folder. The editor shows it at a glance (title, summary, a frame sequence to scrub,
-   stat tiles, the easing curve, colour swatches, type samples); the long notes and the code sit behind "Text spec"
-   and "Code". So: the summary is one short sentence; numbers go in `stats`; detail goes in `points`. Be concrete
-   (numbers, hex values, frame numbers), never generic.
-   ```json
-   {
-     "name": "Springy landing", "slug": "springy-landing",
-     "summary": "A card shoots in, overshoots its spot and springs back.",
-     "ask": "<the note's text>", "frame": 12, "range": [12, 42], "region": null,
-     "captures": ["motion", "style"],
-     "keyFrames": [{ "file": "stills/f0004.jpg", "frame": 4, "label": "Launch" }],
-     "motion": {
-       "stats": [{ "label": "Duration", "value": "0.77s", "sub": "19 f at 25 fps" }, { "label": "Overshoot", "value": "10%" }],
-       "ease": { "token": "overshoot", "bezier": [0.27, 1.18, 0.5, 1.18] },
-       "points": ["What moves, from → to", "Stagger (frames), what overlaps, what leads"],
-       "build": "s.beat('card.in', { … }, (b) => …)"
-     },
-     "style": {
-       "palette": [{ "hex": "#1D1F24", "role": "background" }],
-       "type": [{ "role": "Headline", "name": "High-contrast serif", "font": "Fraunces", "kind": "serif", "spec": "regular, ~6% of frame height" }],
-       "points": ["Flat shapes, 12 px radius, no shadow", "Layout, spacing, texture, depth"]
-     }
-   }
-   ```
-   `frame`/`range`/`region`: copy from the note. `stats`: 2–4 tiles, short values ("0.9s", "10%", "±180px").
-   `keyFrames`: 3–6 stills that tell the story (paths relative to the folder; frame = the moment's own frame number;
-   crop a still to the area that matters when the note had no box). `type[].font`: the closest font the studio ships
-   (Fraunces, Instrument Sans, Inter, Manrope, Bricolage Grotesque, Unbounded, Big Shoulders Display), used for the
-   sample. Leave out `motion` or `style` when the note didn't ask for it. `slug`: short, unique within the reference.
-4. In `references/<id>/ref.json`, set `name` (if it's empty or just a file or site name). Then delete the note (its
-   `.json`, `.png` and pasted images). No "To check" item: the finding is the result.
+**Using one.** A film note points at moments in `useRefs` (`[{ ref, id, name }]`, added with "+ reference"), or names
+one in its text. There is no stored write-up: read the moment's source with this note's request in mind, every time.
+1. Read in order and stop when you have enough: the note's text; `context.png`, `sheet.png` and `motion.json` (the
+   overview); then full-size stills when the note asks about the look (type, texture and colour need detail) or the
+   sheet leaves something unclear; then individual frames, zoomed into the part in question (`ffmpeg … -vf
+   crop=…,scale=…`), for busy moments where the measurements merge several things. The numbers are approximate:
+   trust the frames, use the numbers for timing, easing and colours.
+2. Build it with the scene contract and the motion principles: map timing onto the film's frame rate and beats.
+3. **Compare before reporting:** `npm run ref -- compare <ref>/<moment id> <scene> <a-b>` writes one image with
+   the moment's frames (top) over the film's frames a–b (bottom) at the same four points; look at it, and for
+   details crop the same area of a reference still and a film frame side by side. Fix what doesn't match.
+4. **When a follow-up says it's not close enough, go back to the source.** Reopen the moment's stills and frames
+   (zoomed into what the note is about), compare side by side again, then change it, and say in the "To check" item
+   what the comparison showed.
 
-**Using one:** a film note can carry findings in `useRefs` (`[{ ref, id, slug, name }]`, added with the note's
-"+ reference" button), or name one in its text (`ref:<ref id>/<slug>`). Read that finding's `finding.json`, look at its
-key frames (and the sheet if you need more), and apply what the note asks: the motion (timing, easing, overshoot,
-stagger, mapped onto the film's beats and frame rate) and/or the style (palette, type, shapes, depth), with the scene
-contract and the motion principles. Borrow how it moves and looks; never reuse someone else's logos, artwork or
-footage in a scene. References stay in their project; turning a finding into a technique for everyone happens only
-when the person asks (`techniques/REGISTERING.md`). Adding a reference from chat: `npm run ref -- add <link or file>`.
+Borrow how it moves and looks; a reference's artwork is the person's call to reuse (see `media` above). References
+stay in their project; turning a moment into a technique for everyone happens only when the person asks
+(`techniques/REGISTERING.md`). From chat: `npm run ref -- add <link or file>`, `npm run ref -- list`.
 
 ## Animatics
 "Animatic" means a storyboard in motion: it shows the idea so it can be course-corrected before anything is

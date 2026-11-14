@@ -40,7 +40,7 @@ npm run new-scene -- my-film   # scaffold scenes/my-film (import map, stage, sta
 | Review Claude's changes | **To check** list (shown when no note is selected): click to jump, ✓ when checked, ↩ to reply |
 | Export | **⤓ Export MP4** — 1080p, motion blur, H.264 CRF 18, saved to `out/` |
 | Copy a note with its context | ⌘C with the note selected |
-| Show Claude a moment from another video | Motion Studio menu → **References**: paste a link or drop a file, open it, note the moment (and whether you want its motion, its style or both), **▶ Send to Claude**; then **+ reference** on a film note uses it. See [References](#references) |
+| Show Claude a moment from another video | Motion Studio menu → **References**: paste a link or drop a file, open it, mark the moment you like and **◆ Save**; then **+ reference** on a film note uses it. Drop files onto a note to attach them. See [References and media](#references-and-media) |
 | Zoom the timeline | −/+ (or pinch / ⌘-scroll), 0 resets to the 30 s view; ⇧-scroll to pan |
 
 ## Command line
@@ -81,22 +81,23 @@ proportional tilt, optional name tag), `typer` (uneven seeded typing), `loadSvg`
 keeps single reusable moves, each with a live demo and a kit you import (gallery at `/techniques/`; both are in the
 editor's Motion Studio menu). So far: the construct reveal (`runtime/kits/construct.js`) and the glossy shine (`runtime/kits/shine.js`).
 
-## References
-Other people's videos, for Claude to study and copy the motion of (not the look):
-1. Motion Studio menu → **References** (or **R**), a panel over the editor: paste a link (a tweet, YouTube, Instagram, Vimeo…, downloaded with `yt-dlp`)
-   or drop a video file anywhere on the page. Long videos are fetched small for marking; the moments you note come
-   in full quality.
-2. Click it: its own editor opens inside the panel (the main window stays on your film; references never appear in
-   the scene picker; **← References** goes back to the list). Leave notes as usual:
-   a span over the moment you like, a box around what moves, a line saying what you like.
-3. **▶ Send to Claude** (the note's bar shows it's being worked on). Claude runs `npm run ref -- <id>`, which cuts each
-   noted moment out and saves its frames, full-size stills, a labelled contact sheet, motion measurements (duration,
-   travel, overshoot, a fitted easing and the nearest token) and the colour palette. Claude then writes a *finding*:
-   a green bar on the reference's timeline; click it for the key frames, the motion and (if your note asked) the style.
-4. On a film note, **+ reference** picks a finding; Claude applies its motion and/or style to that span.
+## References and media
+Borrow how another video moves and looks, and bring in your own files. Open **References** in the Motion Studio menu
+(or press **R**): a panel over the editor with two tabs.
+- **References:** paste a link (a tweet, YouTube, Instagram, Pinterest, Vimeo…, downloaded with `yt-dlp`) or drop a
+  video. Click one to open it in its own editor inside the panel, and **mark the moments you like**: drag a span, box
+  what matters if you want, name it, **◆ Save**. Each moment is cut out and measured on the spot (every frame,
+  full-size stills, duration, easing, overshoot, palette) and shows as a green bar; click it to scrub its frames.
+- **Files:** your own footage, screenshots, icons and fonts (upload or drop), plus the references' videos.
 
-References live in the project (`<project>/references/`, never in the studio's git): each person keeps their own.
-A reference worth keeping for everyone becomes a technique, on request.
+On a note in your film:
+- **+ reference** points at a marked moment: *"land the card like this"*. Claude reads that moment's frames for your
+  request, builds it, and compares the result side by side with the reference (`npm run ref -- compare`) before
+  reporting. A follow-up ("still not close") goes back to the same frames.
+- **Drop or paste a file onto the note**, or use **+ media**, to attach it as **A1**, **A2**…: *"use A1 as the
+  background footage"*, *"make the icon look like A2"*.
+
+References and media live in your project (`references/`, `media/`), never in the studio's git.
 
 ## Scenes
 None ship with the studio. Create one with `npm run new-scene -- my-film`; each scene lives in

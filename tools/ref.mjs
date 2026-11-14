@@ -1,41 +1,58 @@
-// References from the command line (the References page does the same from the browser):
-//   npm run ref -- <id>              study the reference's noted moments: cut each out and save its frames, full-size
-//                                    stills, contact sheet, measurements and colour palette in
-//                                    references/<id>/findings/<note id>/, and print a summary
-//   npm run ref -- add <link|file>   add a reference (a link is downloaded with yt-dlp) and wait until it's ready
-//   npm run ref -- list              the project's references
+// References from the command line (the References panel does the same from the editor):
+//   npm run ref -- list                       the project's references and their moments
+//   npm run ref -- add <link|file>            add a reference (a link is downloaded with yt-dlp) and wait until it's ready
+//   npm run ref -- compare <ref>/<moment> <scene> <a-b>
+//       one image: the reference moment (top row) over the film's frames a–b (bottom row), at the same four points
+//       (start, ⅓, ⅔, end), to check a scene against the moment it borrows from. Written to out/compare/.
+import fs from 'node:fs';
 import path from 'node:path';
-import { PROJECT } from '../server/project.mjs';
-import { studyNotes, addLink, addFile, listRefs, jobs, readRef, PREFIX } from '../server/refs.mjs';
+import { spawnSync } from 'node:child_process';
+import { ROOT, PROJECT } from '../server/project.mjs';
+import { addLink, addFile, listRefs, listMoments, jobs, readRef, PREFIX, REFS } from '../server/refs.mjs';
 
-const [cmd, arg] = process.argv.slice(2);
+const [cmd, ...args] = process.argv.slice(2);
 const rel = (p) => path.relative(process.cwd(), p) || '.';
+const sh = (c, a) => { const r = spawnSync(c, a, { encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr?.trim().split('\n').pop() || `${c} failed`); return r.stdout; };
 
 if (cmd === 'list') {
-  for (const r of await listRefs()) console.log(`${r.id.padEnd(28)} ${r.status.padEnd(11)} ${r.name || ''}${r.files.doc ? '  · studied' : ''}`);
-} else if (cmd === 'add' && arg) {
+  for (const r of await listRefs()) {
+    console.log(`${r.id.padEnd(26)} ${r.status.padEnd(11)} ${r.name || ''}`);
+    for (const m of await listMoments(r.id)) console.log(`   ${m.id}  ${m.status}  “${m.name}”  frames ${m.range?.join('–')}`);
+  }
+} else if (cmd === 'add' && args[0]) {
+  const arg = args[0];
   const ref = /^https?:\/\//.test(arg) ? await addLink(arg) : await addFile(path.resolve(process.env.INIT_CWD || '.', arg), arg);
   console.log(`adding ${ref.id}…`);
   await jobs.get(ref.id);
   const r = await readRef(ref.id);
   if (r.status !== 'ready') { console.error(`failed: ${r.error}`); process.exit(1); }
-  console.log(`ready: ${r.name || r.id} · ${r.video.w}×${r.video.h} · ${r.video.fps} fps · ${r.video.duration.toFixed(1)}s\nopen it in the editor: http://localhost:5173/editor/#${PREFIX}${r.id}@0`);
-} else if (cmd && cmd !== 'add') {
-  const id = cmd.startsWith(PREFIX) ? cmd.slice(PREFIX.length) : cmd;
-  const { ref, moments } = await studyNotes(id);
-  if (!moments.length) { console.log(`No open notes on ${PREFIX}${id}: mark a moment in the editor first (a span note, a box, a line).`); process.exit(0); }
-  console.log(`${ref.name || id}  (${ref.source.url || ref.source.file}) · ${ref.video.fps} fps · project ${PROJECT}`);
-  for (const { note, dir, motion, style } of moments) {
-    console.log(`\nnote ${note.id}: “${(note.text || '').trim()}”`);
-    console.log(`  frames ${note.range ? note.range.join('–') : note.frame} · ${motion.momentS.map((s) => s.toFixed(2)).join('–')}s${note.region ? ` · box ${note.region.w}×${note.region.h} at ${note.region.x},${note.region.y}` : ''}`);
-    console.log(`  ${rel(dir)}/  (sheet.png, context.png, stills/, frames/, motion.json, style.json, clip.mp4)`);
-    console.log(`  stills ${style.stills.map((f) => path.basename(f, '.jpg')).join(' ')}`);
-    console.log(`  palette (${style.area}) ${style.palette.map((c) => `${c.hex} ${Math.round(c.share * 100)}%`).join(' · ')}`);
-    console.log(`  change ${motion.overview.change}`);
-    for (const m of motion.moves) console.log(`  move f${m.fromFrame}–f${m.toFrame} · ${m.seconds}s (${m.studioFrames}f at 25) · ${m.shape}${m.travel ? ` · ${m.travel.px}px ${m.travel.direction}` : ''} · ease ${m.ease?.nearestToken || JSON.stringify(m.ease?.bezier)}`);
-    if (!motion.moves.length) console.log('  no clear move found: look at the sheet');
-  }
+  console.log(`ready: ${r.name || r.id} · ${r.video.w}×${r.video.h} · ${r.video.fps} fps · ${r.video.duration.toFixed(1)}s\nopen it from References (R) in the editor`);
+} else if (cmd === 'compare' && args.length >= 3) {
+  const [refMoment, scene, span] = args;
+  const [rid, mid0] = refMoment.replace(PREFIX, '').split('/');
+  const mdir = path.join(REFS, rid, 'moments');
+  const mid = fs.existsSync(mdir) && fs.readdirSync(mdir).find((d) => d === mid0 || d.startsWith(mid0) || d.endsWith(mid0));
+  if (!mid) { console.error(`no moment "${mid0}" on reference "${rid}" (npm run ref -- list)`); process.exit(1); }
+  const clip = path.join(mdir, mid, 'clip.mp4');
+  const n = +sh('ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', clip]).trim();
+  const [a, b] = span.split('-').map(Number);
+  const at = [0, 1 / 3, 2 / 3, 1];
+  const ours = at.map((t) => Math.round(a + t * (b - a)));
+  const r = spawnSync(process.execPath, ['render/render.mjs', scene, '--frames', ours.join(',')], { cwd: ROOT, stdio: 'inherit', env: { ...process.env, MOTION_PROJECT: PROJECT } });
+  if (r.status !== 0) process.exit(r.status || 1);
+  const outDir = path.join(PROJECT, 'out', 'compare'), tmp = path.join(outDir, `.${mid}`);
+  fs.mkdirSync(tmp, { recursive: true });
+  const cell = 'scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=0x101114';
+  at.forEach((t, i) => {
+    sh('ffmpeg', ['-v', 'error', '-y', '-i', clip, '-vf', `select=eq(n\\,${Math.round(t * (n - 1))}),${cell}`, '-frames:v', '1', path.join(tmp, `r${i}.png`)]);
+    sh('ffmpeg', ['-v', 'error', '-y', '-i', path.join(PROJECT, 'out', `${scene}-frames`, `f${String(ours[i]).padStart(4, '0')}.png`), '-vf', cell, path.join(tmp, `o${i}.png`)]);
+  });
+  const file = path.join(outDir, `${scene}-${a}-${b}-vs-${rid}.png`);
+  const inputs = [0, 1, 2, 3].flatMap((i) => ['-i', path.join(tmp, `r${i}.png`)]).concat([0, 1, 2, 3].flatMap((i) => ['-i', path.join(tmp, `o${i}.png`)]));
+  sh('ffmpeg', ['-v', 'error', '-y', ...inputs, '-filter_complex', '[0][1][2][3]hstack=4[r];[4][5][6][7]hstack=4[o];[r][o]vstack', file]);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  console.log(`${rel(file)}\n  top: the reference moment at its start, ⅓, ⅔, end · bottom: ${scene} frames ${ours.join(', ')}`);
 } else {
-  console.log('usage: npm run ref -- <id> | add <link|file> | list');
+  console.log('usage: npm run ref -- list | add <link|file> | compare <ref>/<moment> <scene> <a-b>');
 }
 process.exit(0);
