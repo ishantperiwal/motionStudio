@@ -76,8 +76,9 @@ mean the project's. Check which project a running studio uses in its startup lin
 
 ## Working a note
 1. Read the notes: `notes/<scene>/*.json`, oldest first; skip ones that already have a `reply`
-   unless asked, and work only notes sent to you: `sentTo` is your agent id (`claude`; a note without `sentTo` is
-   Claude's). A note whose `sentTo` names another agent (`antigravity`, `codex`) is theirs: leave it. Always look at the crop `<id>.png` before acting, not just the JSON: it is often the only
+   unless asked, and work only notes sent to you: they have `sentAt`, and `sentTo` is your agent id (`claude`; a sent
+   note without `sentTo` is Claude's). A note without `sentAt` is a draft the person hasn't sent yet, and one whose
+   `sentTo` names another agent (`antigravity`, `codex`) is theirs: leave both. Always look at the crop `<id>.png` before acting, not just the JSON: it is often the only
    evidence of what they mean (spot notes on blank areas have empty `elements`), and reading the text alone
    leads to misreadings. A note gives `frame` or `range`, `text`, `region`
    (stage px), `elements` (data-names / text in the box, best match first — a tight box puts the element

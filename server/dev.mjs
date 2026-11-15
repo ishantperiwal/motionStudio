@@ -320,7 +320,8 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       }
       // "Send to <Agent>": drops a flag that a waiting agent session picks up (tools/wait-for-notes.mjs)
       if (p === '/api/go' && req.method === 'POST') {
-        const { scene, agent } = await readBody(req);
+        const { scene, agent, ids } = await readBody(req);
+        const only = Array.isArray(ids) && ids.length ? new Set(ids) : null;   // a note's own ↑ sends just that note; the top button, all
         if (!safeId(scene)) return send(res, 400, { error: 'scene required' });
         const target = ['claude', 'antigravity', 'codex'].includes(agent) ? agent : 'claude';
         // every open note on the scene is now with the chosen agent until it finishes them (deletes them, or replies).
@@ -330,6 +331,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
           if (!f.endsWith('.json') || f.startsWith('_')) continue;
           const note = await readJSON(path.join(ndir, f), null);
           if (!note || note.reply) continue;
+          if (only && !only.has(note.id)) continue;
           if (note.sentAt && (note.sentTo || 'claude') !== target) continue;
           await writeJSON(path.join(ndir, f), { ...note, sentAt: at, sentTo: target });
         }

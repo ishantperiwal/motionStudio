@@ -10,4 +10,4 @@ your own name.
   `notes/` by hand: it moves the note into the To check list in one step.
 - If your watcher exits with `WATCHER REPLACED`, another session took over: don't start it again.
 - Work only notes whose `sentTo` is your id. A note sent to another agent (or with no `sentTo`, which is Claude's) is
-  theirs: leave it, even if it sits in the same scene.
+  theirs, and a note without `sentAt` is an unsent draft: leave both, even if they sit in the same scene.

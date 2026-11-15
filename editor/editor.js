@@ -492,7 +492,7 @@ addEventListener('mousedown', (e) => {
 let dragging = false;
 function startScrub(e) {
   if (e.target.closest('#zoom')) return;
-  deselect();
+  // scrubbing is looking, not leaving: the open note (even a new one with no text yet) stays as it is
   capture(ruler, e.pointerId);
   dragging = true;
   dlog('down', { via: e.type, on: describe(e.target), ptr: e.pointerType, buttons: e.buttons, S: !!st.S, capture: ruler.hasPointerCapture(e.pointerId), focus: document.hasFocus(), active: describe(document.activeElement) });
@@ -936,8 +936,9 @@ function renderPanel() {
         if (st.selD === it.id) st.selD = null;
         buildTimeline();
       };
-      // a reply turns the item back into a note at the same frame / span (and region, if known)
-      const sendReply = async (it, text) => {
+      // a reply turns the item back into a note at the same frame / span (and region, if known), and sends it straight
+      // to the picked agent (↑ / Enter); "Save as draft" keeps it unsent, to send later with others
+      const sendReply = async (it, text, { send = true } = {}) => {
         if (!text.trim()) return;
         const range = it.range || null, frame = it.frame;
         const beats = st.beats.filter((b) => (range ? b.f1 >= range[0] && b.f0 <= range[1] : frame >= b.f0 && frame <= b.f1) && b.f1 > b.f0).map(({ name, f0, f1 }) => ({ name, f0, f1 }));
@@ -947,6 +948,7 @@ function renderPanel() {
         st.notes.push(note); st.sel = note.id; st.editing = false;
         setPlaying(false); seek(frame, true); setRange(range);
         buildTimeline(); renderPanel(); drawOverlay();
+        if (send) await sendNotes([note.id]);   // like a note's own ↑: just this reply
       };
       const checkAll = async () => {
         await fetch(`/api/checklist?scene=${st.scene}&id=*`, { method: 'DELETE' });
@@ -965,7 +967,7 @@ function renderPanel() {
                 ? h('button', { class: 'reply-btn', title: 'Cancel reply', onclick: (e) => { e.stopPropagation(); st.replyTo = null; renderPanel(); } }, '✕')
                 : h('button', { class: 'reply-btn', title: 'More to say? Reply — it comes back as a note here', onclick: (e) => { e.stopPropagation(); st.replyTo = it.id; renderPanel(); } }, '↩'),
               replying
-                ? h('button', { class: 'resolve small send', title: 'Send reply (Enter)', onclick: (e) => { e.stopPropagation(); sendReply(it, card.querySelector('textarea')?.value || ''); } }, '↑')
+                ? h('button', { class: 'resolve small send', title: `Send reply to ${pickedName()} (Enter)`, onclick: (e) => { e.stopPropagation(); sendReply(it, card.querySelector('textarea')?.value || ''); } }, '↑')
                 : h('button', { class: 'resolve small', title: 'Checked — remove', onclick: async (e) => { e.stopPropagation(); await dropItem(it); renderPanel(); } }, '✓')));
           const hasAtt = it.media?.length || it.useRefs?.length;
           if (hasAtt) card.append(h('div', { class: 'att-row check-att', onclick: (e) => e.stopPropagation() },
@@ -974,10 +976,10 @@ function renderPanel() {
             ...(it.useRefs || []).map((u) => h('span', { class: 'att-chip ref', title: `Reference moment: ${u.name}${u.refName ? ` · ${u.refName}` : ''} · click to inspect frames`, onclick: (e) => { e.stopPropagation(); openRefMoment(u, it, 'To check'); } },
               h('span', { class: 'fmark' }, '◆'), h('span', {}, u.name)))));
           if (replying) {
-            const ta = h('textarea', { placeholder: 'What else should change here? (Enter to add · ⇧Enter for a new line)', onclick: (e) => e.stopPropagation(),
+            const ta = h('textarea', { placeholder: `What else should change here? (Enter sends to ${pickedName()} · ⇧Enter for a new line)`, onclick: (e) => e.stopPropagation(),
               onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(it, ta.value); } if (e.key === 'Escape') { st.replyTo = null; renderPanel(); } } });   // Enter sends, ⇧Enter = new line
             card.append(h('div', { class: 'reply-box', onclick: (e) => e.stopPropagation() }, ta,
-              h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => sendReply(it, ta.value) }, 'Add as note ↵'), h('button', { onclick: () => { st.replyTo = null; renderPanel(); } }, 'Cancel'))));
+              h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => sendReply(it, ta.value) }, 'Send ↵'), h('button', { title: 'Keep it as a draft note, to send later', onclick: () => sendReply(it, ta.value, { send: false }) }, 'Save as draft'), h('button', { onclick: () => { st.replyTo = null; renderPanel(); } }, 'Cancel'))));
             requestAnimationFrame(() => ta.focus({ preventScroll: true }));
           }
           return card;
@@ -997,7 +999,7 @@ function renderPanel() {
         : processing(n)
         ? h('span', { class: 'saved proc', title: `Sent to ${agentName(n.sentTo)}; it disappears when ${agentName(n.sentTo)} has worked it` }, `With ${agentName(n.sentTo)}`)
         : [n.id && n.text?.trim() && !editing ? h('span', { class: 'saved draft', title: 'Saved, not sent yet' }, 'Draft') : null,
-           h('button', { class: 'resolve send', title: `Send to ${pickedName()} (⌘↵). Sends this and any other unsent notes on this scene`, onclick: () => sendNote(n) }, '↑')],
+           h('button', { class: 'resolve send', title: `Send this note to ${pickedName()} (⌘↵). The top Send button sends all unsent notes`, onclick: () => sendNote(n) }, '↑')],
       del));
   panel.append(head);
 
@@ -1346,12 +1348,13 @@ $('#sendAgent').onchange = () => {
   $('#sendBtn').textContent = sendLabel();
   renderPanel();
 };
-// Send to the selected agent: every unsent note on the scene goes (the top button, or a note's own ↑ / ⌘↵)
-async function sendNotes() {
+// Send to the selected agent. The top button sends every unsent note on the scene; a note's own ↑ / ⌘↵ (and a reply's
+// ↑ / Enter) passes `ids` and sends just that note
+async function sendNotes(ids) {
   const b = $('#sendBtn'), agent = sendAgent(), who = agentName(agent);
-  if (st.pending?.text?.trim()) await persist(st.pending);
+  if (!ids && st.pending?.text?.trim()) await persist(st.pending);
   await queue;
-  await fetch('/api/go', json('POST', { scene: st.scene, agent }));
+  await fetch('/api/go', json('POST', { scene: st.scene, agent, ...(ids ? { ids } : {}) }));
   b.textContent = `Sent — ${who} is on it`; b.classList.add('on');
   setTimeout(() => { b.textContent = sendLabel(); b.classList.remove('on'); }, 4000);
   loadNotes();   // the sent notes turn to "With <Agent>"
@@ -1375,9 +1378,9 @@ async function sendNote(n) {
   delete n._fresh; st.editing = false; st.pick = null;
   document.activeElement?.blur?.();   // out of the text box, so the panel redraws as sent
   await persist(n);
-  await sendNotes();
+  await sendNotes([n.id]);   // just this note: drafts elsewhere on the scene stay unsent
 }
-$('#sendBtn').onclick = sendNotes;
+$('#sendBtn').onclick = () => sendNotes();
 $('#zoomIn').onclick = () => { st.zoomed = true; zoomBy(1.5); };
 $('#zoomMinus').onclick = () => { st.zoomed = true; zoomBy(1 / 1.5); };
 $('#zoomOut').onclick = () => { st.zoomed = false; fitDefault(); layoutTimeline(); };
