@@ -36,7 +36,7 @@ npm run new-scene -- my-film   # scaffold scenes/my-film (import map, stage, sta
 | Adjust a span | Drag a note bar's ends — the viewport shows the frame under the end you drag |
 | Save / send / edit / delete a note | Typing saves as you go · **↑** on the note (or ⌘↵) sends it to Claude, with any other unsent notes on the scene · Enter is a new line · Esc closes (a note with text stays as a **Draft**) · click the text to edit · 🗑 (or ⌫ with the note selected) |
 | Show the easing you want | **+ easing** on a note — curve editor with speed graph and presets |
-| Ask Claude to work the notes | **▶ Send to Claude** (needs a Claude session running `tools/wait-for-notes.mjs`). Sent notes show moving stripes until Claude has worked them |
+| Ask Claude to work the notes | **▶ Send to Claude** (needs a Claude session running `tools/wait-for-notes.mjs`). Sent notes show moving stripes until Claude has worked them. The picker next to it sends to Antigravity or Codex instead (their session runs the watcher with `--agent antigravity` / `--agent codex`) |
 | Review Claude's changes | **To check** list (shown when no note is selected): click to jump, ✓ when checked, ↩ to reply |
 | Export | **⤓ Export MP4** — 1080p, motion blur, H.264 CRF 18, saved to `out/` |
 | Copy a note with its context | ⌘C with the note selected |

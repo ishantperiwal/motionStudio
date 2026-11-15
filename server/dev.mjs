@@ -317,22 +317,30 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         const notes = await Promise.all(files.map((f) => readJSON(path.join(dir, f), null)));
         return send(res, 200, notes.filter(Boolean).sort((a, b) => a.created.localeCompare(b.created)));
       }
-      // "Send to Claude": drops a flag that a waiting Claude session picks up (tools/wait-for-notes.mjs)
+      // "Send to <Agent>": drops a flag that a waiting agent session picks up (tools/wait-for-notes.mjs)
       if (p === '/api/go' && req.method === 'POST') {
-        const { scene } = await readBody(req);
+        const { scene, agent } = await readBody(req);
         if (!safeId(scene)) return send(res, 400, { error: 'scene required' });
-        // every open note on the scene is now with Claude: the editor shows them as processing until Claude finishes
-        // them (deletes them, or replies)
+        const target = ['claude', 'antigravity', 'codex'].includes(agent) ? agent : 'claude';
+        // every open note on the scene is now with the chosen agent until it finishes them (deletes them, or replies).
+        // A note already with another agent stays with it: two agents never work the same note.
         const at = new Date().toISOString(), ndir = path.join(PROJECT, 'notes', scene);
         for (const f of fs.existsSync(ndir) ? await fsp.readdir(ndir) : []) {
           if (!f.endsWith('.json') || f.startsWith('_')) continue;
           const note = await readJSON(path.join(ndir, f), null);
-          if (note && !note.reply) await writeJSON(path.join(ndir, f), { ...note, sentAt: at });
+          if (!note || note.reply) continue;
+          if (note.sentAt && (note.sentTo || 'claude') !== target) continue;
+          await writeJSON(path.join(ndir, f), { ...note, sentAt: at, sentTo: target });
         }
-        await writeJSON(path.join(PROJECT, 'notes', '_go.json'), { scene, at });
-        return send(res, 200, { ok: true });
+        const flagName = target === 'claude' ? '_go.json' : `_go.${target}.json`;
+        await writeJSON(path.join(PROJECT, 'notes', flagName), { scene, agent: target, at });
+        return send(res, 200, { ok: true, agent: target });
       }
-      if (p === '/api/go' && req.method === 'GET') return send(res, 200, { pending: fs.existsSync(path.join(PROJECT, 'notes', '_go.json')) });
+      if (p === '/api/go' && req.method === 'GET') {
+        const ndir = path.join(PROJECT, 'notes');
+        const pending = fs.existsSync(ndir) && (await fsp.readdir(ndir)).some((f) => /^_go(\.[a-z]+)?\.json$/.test(f));
+        return send(res, 200, { pending });
+      }
       // the editor's scrub log (diagnostics): one JSON line per ruler drag, in out/.diag/scrub.log
       if (p === '/api/diag' && req.method === 'POST') {
         const d = await readBody(req);

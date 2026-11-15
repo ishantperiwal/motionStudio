@@ -370,11 +370,11 @@ function buildTimeline() {
   const notes = [...st.notes].sort((a, b) => (a.range?.[0] ?? a.frame) - (b.range?.[0] ?? b.frame));
   if (st.pending?.range) notes.unshift(st.pending);
   for (const n of notes) {
-    const proc = processing(n);
-    const bar = h('div', { class: `nbar ${n.range ? 'timed' : 'point'}${proc ? ' processing' : ''}`, title: proc ? `With Claude: ${n.text}` : n.text },
+    const proc = processing(n), who = agentName(n.sentTo);
+    const bar = h('div', { class: `nbar ${n.range ? 'timed' : 'point'}${proc ? ' processing' : ''}`, title: proc ? `With ${who}: ${n.text}` : n.text },
       n.range ? h('div', { class: 'handle l' }) : null, n.range ? h('div', { class: 'handle r' }) : null);
     const lane = h('div', { class: `lane ${st.sel === n.id || n === st.pending ? 'sel' : ''}` },
-      h('div', { class: 'name', title: n.text, onclick: () => n !== st.pending && selectNote(n) }, n.reply ? h('span', { class: 'replied', title: 'Claude replied' }, '↩') : null, proc ? h('span', { class: 'proc', title: 'With Claude' }) : null, n.text || 'New note…'),
+      h('div', { class: 'name', title: n.text, onclick: () => n !== st.pending && selectNote(n) }, n.reply ? h('span', { class: 'replied', title: `${who} replied` }, '↩') : null, proc ? h('span', { class: 'proc', title: `With ${who}` }) : null, n.text || 'New note…'),
       bar);
     lane._note = n;
     bar.addEventListener('pointerdown', (e) => dragNote(e, n, bar));
@@ -942,6 +942,12 @@ function renderPanel() {
               replying
                 ? h('button', { class: 'resolve small send', title: 'Send reply (Enter)', onclick: (e) => { e.stopPropagation(); sendReply(it, card.querySelector('textarea')?.value || ''); } }, '↑')
                 : h('button', { class: 'resolve small', title: 'Checked — remove', onclick: async (e) => { e.stopPropagation(); await dropItem(it); renderPanel(); } }, '✓')));
+          const hasAtt = it.media?.length || it.useRefs?.length;
+          if (hasAtt) card.append(h('div', { class: 'att-row check-att', onclick: (e) => e.stopPropagation() },
+            ...(it.media || []).map((m) => h('a', { class: 'att-chip', href: m.url, target: '_blank', title: `${m.label} · ${m.name}${m.from === 'reference' ? ' (a reference video)' : ''}` },
+              mediaThumb(m), h('b', {}, m.label), h('span', {}, m.name))),
+            ...(it.useRefs || []).map((u) => h('span', { class: 'att-chip ref', title: `Reference moment: ${u.name}${u.refName ? ` · ${u.refName}` : ''} · click to inspect frames`, onclick: (e) => { e.stopPropagation(); openRefMoment(u, it, 'To check'); } },
+              h('span', { class: 'fmark' }, '◆'), h('span', {}, u.name)))));
           if (replying) {
             const ta = h('textarea', { placeholder: 'What else should change here? (Enter to add · ⇧Enter for a new line)', onclick: (e) => e.stopPropagation(),
               onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(it, ta.value); } if (e.key === 'Escape') { st.replyTo = null; renderPanel(); } } });   // Enter sends, ⇧Enter = new line
@@ -964,9 +970,9 @@ function renderPanel() {
       st.scene?.startsWith('ref.')
         ? h('button', { class: 'resolve save-moment', title: 'Save this moment (⌘↵): its frames and measurements are captured at once', onclick: () => saveMoment(n) }, '◆ Save')
         : processing(n)
-        ? h('span', { class: 'saved proc', title: 'Sent to Claude; it disappears when Claude has worked it' }, 'With Claude')
+        ? h('span', { class: 'saved proc', title: `Sent to ${agentName(n.sentTo)}; it disappears when ${agentName(n.sentTo)} has worked it` }, `With ${agentName(n.sentTo)}`)
         : [n.id && n.text?.trim() && !editing ? h('span', { class: 'saved draft', title: 'Saved, not sent yet' }, 'Draft') : null,
-           h('button', { class: 'resolve send', title: 'Send to Claude (⌘↵). Sends this and any other unsent notes on this scene', onclick: () => sendNote(n) }, '↑')],
+           h('button', { class: 'resolve send', title: `Send to ${pickedName()} (⌘↵). Sends this and any other unsent notes on this scene`, onclick: () => sendNote(n) }, '↑')],
       del));
   panel.append(head);
 
@@ -999,7 +1005,7 @@ function renderPanel() {
     ...(n.media || []).map((m) => h('a', { class: 'att-chip', href: m.url, target: '_blank', title: `${m.label} · ${m.name}${m.from === 'reference' ? ' (a reference video)' : ''}` },
       mediaThumb(m), h('b', {}, m.label), h('span', {}, m.name),
       removable ? h('button', { class: 'x', title: 'Remove from this note', onclick: (e) => { e.preventDefault(); e.stopPropagation(); n.media = n.media.filter((x) => x !== m); if (n.id) save(n, { media: n.media }); rerender(); } }, '×') : null)),
-    ...(isRef ? [] : (n.useRefs || []).map((u) => h('span', { class: 'att-chip ref', title: `Reference moment: ${u.name}${u.refName ? ` · ${u.refName}` : ''}` },
+    ...(isRef ? [] : (n.useRefs || []).map((u) => h('span', { class: 'att-chip ref', title: `Reference moment: ${u.name}${u.refName ? ` · ${u.refName}` : ''} · click to inspect frames`, onclick: (e) => { e.stopPropagation(); openRefMoment(u, n); } },
       h('span', { class: 'fmark' }, '◆'), h('span', {}, u.name),
       removable ? h('button', { class: 'x', title: 'Remove', onclick: (e) => { e.stopPropagation(); setUse((n.useRefs || []).filter((x) => x !== u)); } }, '×') : null))),
   ];
@@ -1043,10 +1049,10 @@ function renderPanel() {
       h('div', { class: 'pills' }, ...tokens.map(([name, pts]) => h('button', { class: pts.join() === n.curve.join() ? 'on' : '', onclick: () => setCurve([...pts]) }, name)),
         h('button', { class: 'ghost', onclick: () => setCurve(null) }, 'remove'))));
   }
-  if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, 'Claude'), n.reply));
+  if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, agentName(n.sentTo)), n.reply));
 }
 
-function frameSeq(f) {
+function frameSeq(f, opts = {}) {
   const n = f.frames || 0, fps = f.fps || st.fps, pad = (i) => String(i).padStart(4, '0');
   const src = (i) => `${f.base}frames/f${pad(i)}.jpg?v=${f.v}`;
   const keys = (f.stills || []).map((file) => ({ file, frame: +file.match(/f(\d+)/)?.[1] || null }));
@@ -1065,13 +1071,76 @@ function frameSeq(f) {
     view.addEventListener('pointermove', (e) => { const r = view.getBoundingClientRect(); show(clamp(Math.round(((e.clientX - r.left) / r.width) * (n - 1)) + 1, 1, n)); });
     view.addEventListener('pointerleave', () => { view.classList.remove('scrub'); img.src = src(1); fill.style.width = '0'; cap.textContent = ''; });
   }
-  const open = st.fOpen === 'keys';
-  const toggle = h('button', { class: `chip ${open ? 'on' : ''}`, onclick: () => { st.fOpen = open ? null : 'keys'; renderPanel(); } }, `Stills ${keys.length}`);
+  let open = opts.openKeys !== undefined ? opts.openKeys : st.fOpen === 'keys';
+  const keysEl = keys.length ? h('div', { class: 'f-keys', hidden: !open }, keys.map((k) => h('a', { href: `${f.base}${k.file}`, target: '_blank', title: 'Open full size' },
+    h('img', { src: `${f.base}${k.file}?v=${f.v}`, loading: 'lazy' }), h('span', {}, k.frame ? `f${k.frame}` : '')))) : null;
+  const toggle = h('button', { class: `chip ${open ? 'on' : ''}`, onclick: () => {
+    if (opts.onToggleKeys) return opts.onToggleKeys(!open);
+    if (opts.openKeys !== undefined) { open = !open; toggle.classList.toggle('on', open); if (keysEl) keysEl.hidden = !open; return; }
+    st.fOpen = open ? null : 'keys'; renderPanel();
+  } }, `Stills ${keys.length}`);
   const box = h('div', { class: 'f-seq' }, view, n ? bar : null,
-    h('div', { class: 'meta' }, h('span', {}, n ? `▦ ${n} frames · ${(n / fps).toFixed(1)}s` : '▦ frames'), keys.length ? toggle : null));
-  if (open) box.append(h('div', { class: 'f-keys' }, keys.map((k) => h('a', { href: `${f.base}${k.file}`, target: '_blank', title: 'Open full size' },
-    h('img', { src: `${f.base}${k.file}?v=${f.v}`, loading: 'lazy' }), h('span', {}, k.frame ? `f${k.frame}` : '')))));
+    h('div', { class: 'meta' }, h('span', {}, n ? `▦ ${n} frames · ${(n / fps).toFixed(1)}s` : '▦ frames'), keys.length ? toggle : null),
+    keysEl);
   return box;
+}
+
+async function openRefMoment(u, note, status) {
+  if (EMBED) return;
+  $('#refMomentModal')?._close?.();
+  const close = () => {
+    const m = $('#refMomentModal');
+    if (!m || m.classList.contains('closing')) return;
+    removeEventListener('keydown', onKey, true);
+    m.classList.add('closing');
+    setTimeout(() => m.remove(), 180);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
+  const seqWrap = h('div', { class: 'rm-seq' }, h('div', { class: 'muted' }, 'Loading reference frames…'));
+  const side = h('div', { class: 'rm-side' });
+  const statusLbl = processing(note) ? `With ${agentName(note.sentTo)}` : status || (note.reply ? 'Replied' : 'Draft');
+  const noteCard = h('div', { class: 'rm-card' },
+    h('h4', {}, h('span', {}, `Note · ${where(note)}`), h('span', { class: `rm-pill ${processing(note) ? 'proc' : ''}` }, statusLbl)),
+    note.followUp ? h('div', { class: 'rm-follow' }, h('b', {}, 'Follow-up on: '), note.followUp) : null,
+    h('div', { class: 'rm-comment' }, note.text?.trim() || 'No comment on this note.'));
+  side.append(noteCard);
+
+  const openBtn = h('button', { class: 'rm-open', title: 'Open this reference in the References panel', onclick: () => {
+    close();
+    openRefs(`/editor/?embed#${u.scene || `ref.${u.ref}`}@${u.frame ?? 0}`);
+  } }, 'Open in References');
+  const closeBtn = h('button', { class: 'rm-close', title: 'Close (Esc)', onclick: close }, '×');
+  const head = h('div', { class: 'rm-head' },
+    h('span', { class: 'fmark' }, '◆'),
+    h('span', { class: 'rm-title' }, u.name || 'Reference moment'),
+    u.refName ? h('span', { class: 'rm-sub' }, `· ${u.refName}`) : null,
+    h('span', { class: 'spacer' }), openBtn, closeBtn);
+  const modal = h('div', { id: 'refMomentModal', onclick: (e) => { if (e.target.id === 'refMomentModal') close(); } },
+    h('div', { class: 'sheet' }, head, h('div', { class: 'rm-body' }, seqWrap, side)));
+  modal._close = close;
+  document.body.append(modal);
+  addEventListener('keydown', onKey, true);
+  setPlaying(false);
+
+  try {
+    const list = await (await fetch(`/api/moments?ref=${encodeURIComponent(u.ref)}`)).json();
+    const f = list.find((x) => x.id === u.id);
+    if (!modal.isConnected) return;
+    seqWrap.innerHTML = '';
+    if (!f) { seqWrap.append(h('div', { class: 'muted' }, 'Moment not found on this reference.')); return; }
+    if (f.status === 'capturing') seqWrap.append(h('div', { class: 'muted' }, 'Cutting out the frames and measuring them…'));
+    else if (f.status === 'failed') seqWrap.append(h('div', { class: 'muted' }, f.error || 'Capture failed.'));
+    else seqWrap.append(frameSeq(f, { openKeys: true }));
+
+    const refDetails = [];
+    if (f.text && f.text !== f.name) refDetails.push(h('div', { class: 'rm-comment' }, f.text));
+    if (f.move?.ease) refDetails.push(h('div', { class: 'muted' }, `${f.move.seconds}s (${f.move.studioFrames} f at 25 fps) · ${f.move.ease.nearestToken || 'custom'} [${f.move.ease.bezier.join(', ')}]`));
+    else if (f.seconds) refDetails.push(h('div', { class: 'muted' }, `${f.seconds.toFixed(2)}s · ${f.frames} frames`));
+    if (f.palette?.length) refDetails.push(h('div', { class: 'f-pal' }, f.palette.slice(0, 8).map((c) => h('span', { class: 'sw', title: `${c.hex} · ${Math.round(c.share * 100)}%`, style: { background: c.hex } }))));
+    if (refDetails.length) side.append(h('div', { class: 'rm-card' }, h('h4', {}, 'Reference moment'), ...refDetails));
+  } catch {
+    if (modal.isConnected) { seqWrap.innerHTML = ''; seqWrap.append(h('div', { class: 'muted' }, 'Could not load reference frames.')); }
+  }
 }
 // A moment marked on a reference: its frames to scrub and what was measured (no write-up: Claude reads the frames when
 // a film note uses it). Claude's notes from earlier studies, if any, sit behind a chip.
@@ -1240,15 +1309,27 @@ $('#exportBtn').onclick = async () => {
   pollExport();
 };
 $('#exportStop').onclick = async () => { $('#exportStop').disabled = true; await fetch(`/api/export?scene=${st.scene}`, { method: 'DELETE' }); $('#exportStop').disabled = false; pollExport(); };
-// Send to Claude: every unsent note on the scene goes (the top button, or a note's own ↑ / ⌘↵)
-async function sendToClaude() {
-  const b = $('#sendBtn');
+const AGENT_NAMES = { claude: 'Claude', antigravity: 'Antigravity', codex: 'Codex' };
+const sendAgent = () => $('#sendAgent')?.value || 'claude';
+const agentName = (id) => AGENT_NAMES[id] || 'Claude';   // who a note was sent to (notes from before the picker went to Claude)
+const pickedName = () => AGENT_NAMES[sendAgent()];        // who the next Send goes to
+const sendLabel = () => `▶ Send to ${pickedName()}`;
+try { const a = localStorage.getItem('ms.sendAgent'); if (a && AGENT_NAMES[a]) $('#sendAgent').value = a; } catch {}
+$('#sendBtn').textContent = sendLabel();
+$('#sendAgent').onchange = () => {
+  try { localStorage.setItem('ms.sendAgent', sendAgent()); } catch {}
+  $('#sendBtn').textContent = sendLabel();
+  renderPanel();
+};
+// Send to the selected agent: every unsent note on the scene goes (the top button, or a note's own ↑ / ⌘↵)
+async function sendNotes() {
+  const b = $('#sendBtn'), agent = sendAgent(), who = agentName(agent);
   if (st.pending?.text?.trim()) await persist(st.pending);
   await queue;
-  await fetch('/api/go', json('POST', { scene: st.scene }));
-  b.textContent = 'Sent — Claude is on it'; b.classList.add('on');
-  setTimeout(() => { b.textContent = '▶ Send to Claude'; b.classList.remove('on'); }, 4000);
-  loadNotes();   // the sent notes turn to "With Claude"
+  await fetch('/api/go', json('POST', { scene: st.scene, agent }));
+  b.textContent = `Sent — ${who} is on it`; b.classList.add('on');
+  setTimeout(() => { b.textContent = sendLabel(); b.classList.remove('on'); }, 4000);
+  loadNotes();   // the sent notes turn to "With <Agent>"
 }
 // On a reference, a note is a moment to keep: saved at once (frames and measurements captured in the background); the
 // note itself goes away and the moment's green bar takes its place
@@ -1269,9 +1350,9 @@ async function sendNote(n) {
   delete n._fresh; st.editing = false; st.pick = null;
   document.activeElement?.blur?.();   // out of the text box, so the panel redraws as sent
   await persist(n);
-  await sendToClaude();
+  await sendNotes();
 }
-$('#sendBtn').onclick = sendToClaude;
+$('#sendBtn').onclick = sendNotes;
 $('#zoomIn').onclick = () => { st.zoomed = true; zoomBy(1.5); };
 $('#zoomMinus').onclick = () => { st.zoomed = true; zoomBy(1 / 1.5); };
 $('#zoomOut').onclick = () => { st.zoomed = false; fitDefault(); layoutTimeline(); };
@@ -1292,7 +1373,7 @@ brandBtn.onclick = (e) => { e.stopPropagation(); setMenu(brandMenu.hidden); };
 brandMenu.onclick = (e) => { if (e.target.closest('#loopItem')) setLoop(!st.loop); if (e.target.closest('#referencesLink')) openRefs(); if (e.target.closest('button, a')) setMenu(false); };
 
 // References: a panel over the editor (editor/references.html in a frame). Picking one there opens it here.
-function openRefs() {
+function openRefs(src = '/editor/references.html?embed') {
   if (EMBED || $('#refsModal')) return;
   const close = () => {
     const m = $('#refsModal');
@@ -1303,7 +1384,7 @@ function openRefs() {
   };
   const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
   const modal = h('div', { id: 'refsModal', onclick: (e) => { if (e.target.id === 'refsModal') close(); } },
-    h('div', { class: 'sheet' }, h('iframe', { src: '/editor/references.html?embed', title: 'References' })));
+    h('div', { class: 'sheet' }, h('iframe', { src, title: 'References' })));
   modal._close = close;
   document.body.append(modal);
   addEventListener('keydown', onKey, true);

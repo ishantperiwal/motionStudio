@@ -47,6 +47,10 @@ For a one-off you can also pass `--project <folder>` to any command (`npm run de
 The **▶ Send to Claude** button only works while a Claude session is running the *notes watcher*
 (`tools/wait-for-notes.mjs`). It isn't started by `npm run dev`; you start it from Claude.
 
+The picker next to Send can send notes to another agent instead (Antigravity, Codex). That agent's session runs its
+own watcher, `node tools/wait-for-notes.mjs --agent antigravity` (or `--agent codex`), and works only the notes sent
+to it. A note already with one agent stays with it: sending again to another agent doesn't take it over.
+
 1. Open a Claude Code session in the `motionStudio` folder and say:
    > Start the notes watcher.
 2. In the editor, leave notes (press **S** and draw a box, or hold **⇧** while scrubbing for a span).

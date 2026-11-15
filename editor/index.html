@@ -32,7 +32,10 @@
     <button id="exportBtn" title="Export: motion blur, high quality, at the size and format picked on the left">⤓ Export MP4</button>
     <button id="exportStop" hidden title="Stop the export">■ Stop</button>
   </div>
-  <button id="sendBtn" class="send" title="Ask Claude to work the open notes now">▶ Send to Claude</button>
+  <div id="sendGroup">
+    <select id="sendAgent" title="Agent to send notes to"><option value="claude">Claude</option><option value="antigravity">Antigravity</option><option value="codex">Codex</option></select>
+    <button id="sendBtn" class="send" title="Ask the selected agent to work the open notes now">▶ Send to Claude</button>
+  </div>
 </header>
 
 <main>

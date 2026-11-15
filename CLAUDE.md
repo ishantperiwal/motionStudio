@@ -76,7 +76,8 @@ mean the project's. Check which project a running studio uses in its startup lin
 
 ## Working a note
 1. Read the notes: `notes/<scene>/*.json`, oldest first; skip ones that already have a `reply`
-   unless asked. Always look at the crop `<id>.png` before acting, not just the JSON: it is often the only
+   unless asked, and work only notes sent to you: `sentTo` is your agent id (`claude`; a note without `sentTo` is
+   Claude's). A note whose `sentTo` names another agent (`antigravity`, `codex`) is theirs: leave it. Always look at the crop `<id>.png` before acting, not just the JSON: it is often the only
    evidence of what they mean (spot notes on blank areas have empty `elements`), and reading the text alone
    leads to misreadings. A note gives `frame` or `range`, `text`, `region`
    (stage px), `elements` (data-names / text in the box, best match first — a tight box puts the element
@@ -110,7 +111,9 @@ mean the project's. Check which project a running studio uses in its startup lin
 Whenever you start the studio (`npm run dev`), also start the watcher for the same project (see RUN-STUDIO.md):
 pass it the same `--project` as the studio, unless `project.txt` sets it.
 While a session is working notes, keep `node tools/wait-for-notes.mjs` running in the background: it exits
-when the editor's "Send to Claude" button is pressed — then work the notes and start it again (notes on a `ref.<id>`
+when the editor's "Send to Claude" button is pressed — then work the notes and start it again. The editor can send to
+other agents too (a picker next to Send); each waits with `--agent <id>` (`antigravity`, `codex`) and follows this
+file, reading its own name and id where it says Claude (notes on a `ref.<id>`
 scene are references to study: see [References](#references)).
 The dev server live-reloads the editor when scene files or notes change.
 
