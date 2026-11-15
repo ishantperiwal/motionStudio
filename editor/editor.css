@@ -220,6 +220,21 @@ button.ghost { background: transparent; border-style: dashed; color: var(--muted
 .nbar.fbar.point { background: var(--ok); }
 .lane .fmark { color: var(--ok); margin-right: 5px; font-size: 10px; }
 .lane.finding.sel { background: rgba(63, 185, 80, .1); }
+/* done: the To check items under the open notes, in the order they were finished. A muted green (moments on a
+   reference use the bright one), thinner and read-only */
+.lane.done-h { height: 20px; border-bottom: 0; }
+.lane.done-h .name { right: 0; width: auto; line-height: 22px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); cursor: default; background: transparent; }
+.lane.done-h:hover { background: transparent; }
+.lane.done { height: 20px; }
+.lane.done .name { line-height: 20px; font-size: 11.5px; color: #a9bfb0; }
+.lane .dmark { color: #6FBF87; margin-right: 6px; font-size: 10px; }
+.nbar.dbar { cursor: pointer; }
+.nbar.dbar.timed { top: 6px; height: 8px; border-radius: 3px; background: rgba(111, 191, 135, .3); border: 1px solid rgba(111, 191, 135, .75); }
+.nbar.dbar.point { width: 9px; height: 9px; top: 5.5px; margin-left: -4.5px; background: #6FBF87; }
+.lane.done.sel { background: rgba(111, 191, 135, .1); }
+.lane.done.sel .name { background: #1b241e; }
+.lane.done.sel .nbar { outline: 1px solid #fff; }
+.check-it.sel { border-color: #6FBF87; }
 .lane.finding.sel .name { background: #1c2620; }
 .region.found { border-color: var(--ok); background: rgba(63, 185, 80, .08); }
 .region.found .lbl { background: var(--ok); }

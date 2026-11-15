@@ -380,6 +380,18 @@ function buildTimeline() {
     bar.addEventListener('pointerdown', (e) => dragNote(e, n, bar));
     lanes.append(lane);
   }
+  // done: what the agents finished (the To check list), in the order they finished it. Green, quieter and read-only;
+  // click one to jump there and open its card; ticking it ✓ removes it
+  const done = st.scene?.startsWith('ref.') ? [] : st.checklist || [];
+  if (done.length) lanes.append(h('div', { class: 'lane done-h' }, h('div', { class: 'name' }, `Done · to check ${done.length}`)));
+  for (const it of done) {
+    const bar = h('div', { class: `nbar dbar ${it.range ? 'timed' : 'point'}`, title: `Done: ${it.text}` });
+    const lane = h('div', { class: `lane done ${st.selD === it.id && !st.sel && !st.pending ? 'sel' : ''}` },
+      h('div', { class: 'name', title: it.text, onclick: () => selectDone(it) }, h('span', { class: 'dmark' }, '✓'), it.text), bar);
+    lane._note = it; lane._done = true;
+    bar.addEventListener('pointerdown', (e) => { e.stopPropagation(); selectDone(it); });
+    lanes.append(lane);
+  }
   // a reference's marked moments (click for the frames and what was measured); striped while they're being captured
   for (const f of st.findings || []) {
     const bar = h('div', { class: `nbar fbar ${f.range ? 'timed' : 'point'} ${f.status === 'capturing' ? 'processing' : ''} ${f.status === 'failed' ? 'failed' : ''}`, title: f.status === 'capturing' ? 'Capturing…' : f.text || f.name });
@@ -748,22 +760,33 @@ lanes.addEventListener('pointerdown', (e) => { if (!e.target.closest('.nbar, .na
 
 function selectNote(n) {
   if (st.pending && st.pending.text?.trim()) persist(st.pending);
-  st.pending = null; st.sel = n.id; st.selF = null; st.curveOpen = false; st.editing = false; st.pick = null;
+  st.pending = null; st.sel = n.id; st.selF = null; st.selD = null; st.curveOpen = false; st.editing = false; st.pick = null;
   st.areaSel = false;                  // picking the note (timeline bar) selects the note, not its area
   setPlaying(false);
   seek(n.frame, true);
   setRange(n.range || null);
-  for (const lane of lanes.children) lane.classList.toggle('sel', !lane._finding && lane._note?.id === n.id);
+  for (const lane of lanes.children) lane.classList.toggle('sel', !lane._finding && !lane._done && lane._note?.id === n.id);
   renderPanel(); drawOverlay();
 }
 function selectFinding(f) {
   if (st.pending && st.pending.text?.trim()) persist(st.pending);
-  st.pending = null; st.sel = null; st.selF = f.id; st.editing = false; st.fOpen = null;
+  st.pending = null; st.sel = null; st.selF = f.id; st.selD = null; st.editing = false; st.fOpen = null;
   setPlaying(false);
   seek(f.range?.[0] ?? f.frame ?? 0, true);
   setRange(f.range || null);
   for (const lane of lanes.children) lane.classList.toggle('sel', !!lane._finding && lane._note?.id === f.id);
   renderPanel(); drawOverlay();
+}
+
+// a done item (green lane, or its To check card): jump there and show its card in the To check list
+function selectDone(it) {
+  if (st.pending && st.pending.text?.trim()) persist(st.pending);
+  st.pending = null; st.sel = null; st.selF = null; st.selD = it.id; st.editing = false;
+  if (st.replyTo !== it.id) st.replyTo = null;
+  setPlaying(false); seek(it.frame, true); setRange(it.range || null); st.rangeAuto = true;
+  for (const lane of lanes.children) lane.classList.toggle('sel', !!lane._done && lane._note?.id === it.id);
+  renderPanel(); drawOverlay();
+  panel.querySelector('.check-it.sel')?.scrollIntoView({ block: 'nearest' });
 }
 
 // Saving: typing autosaves (debounced); ✓ saves immediately and switches the note to its saved
@@ -782,7 +805,7 @@ function persist(n) {
       buildTimeline();
     } else {
       await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [], media: n.media || [] }));
-      const lane = [...lanes.children].find((l) => l._note === n || l._note?.id === n.id);
+      const lane = [...lanes.children].find((l) => !l._done && (l._note === n || l._note?.id === n.id));
       if (lane) lane.querySelector('.name').lastChild.textContent = n.text;
     }
   }).catch((e) => console.error('note save failed', e));
@@ -910,6 +933,8 @@ function renderPanel() {
       const dropItem = async (it) => {
         await fetch(`/api/checklist?scene=${st.scene}&id=${encodeURIComponent(it.id)}`, { method: 'DELETE' });
         st.checklist = st.checklist.filter((x) => x !== it);
+        if (st.selD === it.id) st.selD = null;
+        buildTimeline();
       };
       // a reply turns the item back into a note at the same frame / span (and region, if known)
       const sendReply = async (it, text) => {
@@ -925,13 +950,13 @@ function renderPanel() {
       };
       const checkAll = async () => {
         await fetch(`/api/checklist?scene=${st.scene}&id=*`, { method: 'DELETE' });
-        st.checklist = []; st.replyTo = null; renderPanel();
+        st.checklist = []; st.replyTo = null; st.selD = null; buildTimeline(); renderPanel();
       };
       panel.append(h('div', { class: 'check-h' }, h('span', {}, 'To check ', h('span', { class: 'muted' }, `${st.checklist.length}`)),
         h('button', { class: 'check-all', title: 'All checked — clear the list', onclick: checkAll }, '✓ Check all')),
         ...st.checklist.map((it) => {
           const replying = st.replyTo === it.id;
-          const card = h('div', { class: `check-it ${replying ? 'replying' : ''}`, title: 'Jump there', onclick: () => { setPlaying(false); seek(it.frame, true); setRange(it.range || null); st.rangeAuto = true; } },
+          const card = h('div', { class: `check-it ${replying ? 'replying' : ''} ${st.selD === it.id ? 'sel' : ''}`, title: 'Jump there', onclick: () => selectDone(it) },
             h('span', { class: 'fr' }, it.range ? `${it.range[0]}–${it.range[1]}` : `f ${it.frame}`),
             h('span', { class: 'tx' }, it.text),
             // while replying: ✕ cancels the reply, ↑ sends it (✓ never dismisses an item you're replying to)
