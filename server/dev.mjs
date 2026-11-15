@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { ROOT, PROJECT } from './project.mjs';
 import { listRefs, listRefScenes, scenePage, addLink, addFile, deleteRef, safeRefId, hasYtDlp, PREFIX, listMoments, allMoments, addMoment, updateMoment, deleteMoment } from './refs.mjs';
 import { listMedia, addMedia, deleteMedia } from './media.mjs';
+import { dropDoneNotes, scenesWithNotes } from './done.mjs';
 
 // The browser for capturing frames: Playwright's own Chromium (npx playwright install chromium), never the user's Google
 // Chrome app. A hidden instance of the real Chrome app takes its place on macOS: with the user's Chrome closed, clicking
@@ -447,6 +448,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
   });
 
   if (watch) {
+    for (const scene of scenesWithNotes()) try { dropDoneNotes(scene); } catch {}   // tidy anything left half-finished
     let timer = null, changed = new Set();
     for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes', 'references', 'media']) {
       const abs = path.join(['scenes', 'notes', 'references', 'media'].includes(dir) ? PROJECT : ROOT, dir);
@@ -454,6 +456,9 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       fs.watch(abs, { recursive: true }, (_, f) => {
         if (!f || /(^|\/)\.|~$/.test(f)) return;
         if (dir === 'references' && !/(^|\/)(ref|moment)\.json$/.test(f)) return;   // not every frame file being written
+        // the To check list changed (an agent finished a note): a note already in it is done, so it goes (server/done.mjs)
+        const m = dir === 'notes' && f.match(/^([^/]+)\/_checklist\.json$/);
+        if (m) try { dropDoneNotes(m[1]); } catch {}
         changed.add(`${dir}/${f}`);
         if (!['notes', 'editor', 'references', 'media'].includes(dir)) sceneVersion++;   // scene, runtime or tokens changed: playback frames are stale
         clearTimeout(timer);

@@ -87,7 +87,8 @@ its \`RUN-STUDIO.md\`. Run every command below from \`${path.basename(here)}/\`.
 2. Start the notes watcher, so **▶ Send to Claude** works: in a Claude Code session, say
    > Start the notes watcher for ${name}.
 
-   Claude runs this in the background (it exits when you press Send; Claude works the notes and starts it again):
+   Claude runs this in the background (it exits when you press Send; Claude works the notes and starts it again).
+   There's one watcher per project: starting it in a new chat replaces the one in an older chat.
    \`\`\`bash
    node ${q(path.join(studio, 'tools/wait-for-notes.mjs'))} ${P}
    \`\`\`

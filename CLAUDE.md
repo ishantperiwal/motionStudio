@@ -103,13 +103,18 @@ mean the project's. Check which project a running studio uses in its startup lin
    - only when the change is about motion: `npm run probe -- <scene> "<data-name>" --range a-b` for
      speed curves (no unintended hard stops, abrupt starts or jumps), or `--sheet a-b:step` for a
      contact sheet across the beat.
-4. Once a note is done, delete it (`<id>.json` and `<id>.png`; attached media stays in the library), add a 1–2 line
-   item to `notes/<scene>/_checklist.json` (`{ items: [{ id, frame, range?, region?, text, useRefs?, media? }] }` —
-   copy frame/range/region, and `useRefs`/`media` if the note had them, so a reply keeps them) saying what changed and where to look, and tell the person in chat. They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
+4. Once a note is done, finish it with one command (never by editing `notes/` by hand):
+   `npm run done -- <scene> <note id> "<what changed and where to look, 1–2 lines>"`. It writes the "To check" item
+   into `notes/<scene>/_checklist.json` (frame, span, region, `useRefs` and `media` carried over, so a reply keeps
+   them) and deletes the note and its crop (attached media stays in the library). Then tell the person in chat.
+   (As a safety net the dev server also removes any note whose id is already in the To check list.) They tick items off in the editor's "To check" list, or reply — a reply comes back as a new note
    with `followUp` set to the item's text (treat it as feedback on that change).
    If you could not do a note, leave it and put your question in `"reply"` instead.
 Whenever you start the studio (`npm run dev`), also start the watcher for the same project (see RUN-STUDIO.md):
-pass it the same `--project` as the studio, unless `project.txt` sets it.
+pass it the same `--project` as the studio, unless `project.txt` sets it. There is one watcher per project and agent:
+starting one replaces any earlier one (say, in another chat), so Send comes to the session that started it last. Read
+its first line once it's running: if it says it replaced an earlier watcher, tell the person. If your own watcher exits
+with `WATCHER REPLACED`, another session has taken over: don't start it again; tell the person instead.
 While a session is working notes, keep `node tools/wait-for-notes.mjs` running in the background: it exits
 when the editor's "Send to Claude" button is pressed — then work the notes and start it again. The editor can send to
 other agents too (a picker next to Send); each waits with `--agent <id>` (`antigravity`, `codex`) and follows this

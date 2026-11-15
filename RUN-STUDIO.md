@@ -66,6 +66,8 @@ Good to know:
   happens until a watcher starts; then Claude picks the notes up straight away. Nothing is lost.
 - **It lasts as long as the Claude session.** Close or restart the session and you need to ask for the
   watcher again.
+- **One watcher at a time.** Starting the watcher in a new chat replaces the one in an older chat (Claude says so),
+  so Send always reaches the chat that started it last: normally the one where you started the studio.
 - **Check if it's running:**
   ```bash
   pgrep -fl wait-for-notes
