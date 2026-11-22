@@ -28,9 +28,10 @@ export function finishNote(scene, id, text) {
   return item;
 }
 
-// Safety net: any note whose id is already in its scene's To check list is done; remove it. Returns the removed ids.
+// Safety net: any note whose id is already in its scene's To check list (as finished, not queued) is done; remove it.
 export function dropDoneNotes(scene) {
-  const ids = new Set((read(checklistFile(scene), { items: [] }).items || []).map((i) => i.id));
+  const items = read(checklistFile(scene), { items: [] }).items || [];
+  const ids = new Set(items.filter((i) => i.status !== 'queued').map((i) => i.id));
   const gone = [];
   for (const id of ids) if (fs.existsSync(path.join(notesDir(scene), id + '.json'))) { removeNote(scene, id); gone.push(id); }
   return gone;

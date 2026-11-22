@@ -5,14 +5,21 @@
   "type": "module",
   "description": "Code-driven motion design with a frame-targeted feedback editor.",
   "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "dev": "node server/dev.mjs",
+    "mcp": "node dist/mcp/index.js",
     "render": "node render/render.mjs",
     "probe": "node render/probe.mjs",
     "new-scene": "node tools/new-scene.mjs",
+    "new-lottie": "node tools/new-lottie.mjs",
+    "verify-lottie": "node tools/verify-lottie.mjs",
     "ref": "node tools/ref.mjs",
-    "done": "node tools/done.mjs"
+    "done": "node tools/done.mjs",
+    "test:lottie": "npm run build && node --test tests/lottie-pipeline.test.mjs"
   },
   "dependencies": {
+    "@dotlottie/dotlottie-js": "^1.10.0",
     "@fontsource/big-shoulders-display": "^5.3.0",
     "@fontsource/bricolage-grotesque": "^5.3.0",
     "@fontsource/fraunces": "^5.3.0",
@@ -20,14 +27,22 @@
     "@fontsource/inter": "^5.3.0",
     "@fontsource/manrope": "^5.3.0",
     "@fontsource/unbounded": "^5.3.0",
+    "@lottiefiles/relottie": "^1.16.0",
+    "@lottiefiles/relottie-parse": "^1.16.0",
+    "@lottiefiles/relottie-stringify": "^1.16.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "gsap": "^3.13.0",
     "lottie-web": "^5.12.2",
     "p5": "^1.11.3",
     "pixi.js": "^8.6.6",
     "roughjs": "^4.6.6",
-    "three": "^0.170.0"
+    "svgo": "^4.1.0",
+    "three": "^0.170.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "playwright": "^1.49.1"
+    "@types/node": "^26.6.6",
+    "playwright": "^1.49.1",
+    "typescript": "^7.0.2"
   }
 }

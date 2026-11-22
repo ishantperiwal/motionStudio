@@ -6,7 +6,9 @@ those notes into precise scene changes and verify them in rendered frames.
 
 **Motion principles apply by default.** Before planning, building or retiming any scene (animatics excepted: there,
 only staging and timing matter), read `skills/motion-principles/SKILL.md` and follow it: key frames are composed
-layouts first, then consistent easing, stagger, overlapping action and even timing between them.
+layouts first, then consistent easing, stagger, overlapping action and even timing between them. For **Lottie
+compositions** (`scenes/<id>/comp.json`), also read `skills/lottie-craft/SKILL.md` and **always run
+`npm run verify-lottie -- <scene>`** (and inspect `out/<scene>-sheet.png`) before calling `npm run done`.
 
 ## Layout
 A studio copy is the tool. A project's own work (its `scenes/`, `notes/` and `out/`) can live in a separate project
@@ -161,6 +163,34 @@ made properly. Keep it to what tells the story:
 - Everything drawn rough with the `sketch` kit; only the elements the story needs. Labels and placeholders are fine.
 - `shotHud` on top: each shot's title and one-line action.
 - Motion only for staging and timing (what enters, what happens, roughly when), not polish.
+
+## Lottie compositions
+A scene whose folder has a `comp.json` is a Lottie composition, made to ship to iOS, Android and the web: no
+`scene.js`, no beats. Rules for building one: `skills/lottie-craft/SKILL.md` (read it first, every time).
+- **Files** (`scenes/<id>/`): `comp.json` is the source: size, fps, `durationFrames`, `tokens`, `assets` (SVGs in
+  `assets/`, each top-level `<g id>` becomes a named layer), `primitives` (motion moves: `position`, `scale`,
+  `rotation`, `opacity`, `springMove`, `trimStroke`, `staggeredEntrance`, `faux3DFlip`, `squashAndStretch`,
+  `keyframeTrack`) and `patches` (per-layer edits applied last). `animation.json` (the Lottie) and `filters.json`
+  are compiled from it: never edit them by hand. `index.html` is the player page (`runtime/lottie-stage.js`).
+- **The compiler** is TypeScript in `src/compiler/`; every tool loads it from `dist/`, so run `npm run build` after
+  changing `src/` (and once after cloning). The dev server says "Lottie compiler not built" when `dist/` is missing.
+- **Changing one:** if `tools/build-<id>.mjs` exists, it is the source (it rebuilds `comp.json` from scratch, so edits
+  to `comp.json` are lost on its next run): change it and run `node tools/build-<id>.mjs`. Otherwise edit
+  `comp.json`'s `primitives` / `patches` and recompile; `npm run verify-lottie -- <id>` recompiles `animation.json`
+  as it checks. Times are frames at the composition's own `fps` (often 60, not the studio's 25).
+- **New one:** `npm run new-lottie -- <id> [--size 512x512] [--fps 60] [--frames 90]` (scaffolds a flipping coin to
+  start from).
+- **Notes on a Lottie scene** have no crop `<id>.png`: read `region` and `elements` (Lottie layer names under the box,
+  from the live SVG) instead, and render the note's frame with `npm run verify-lottie -- <id> --frames <f>` to see it.
+  Each send also appends a line to `notes/_inbox.jsonl` (same note as `layers`, `boundingBox`, `distilledCurve`); the
+  note JSON stays the one to work and finish. `distilledCurve` is a curve fitted from a motion the person
+  demonstrated in the Proxy Sandbox: apply it like `curve`.
+- **Verify** with `npm run verify-lottie -- <id>` and look at `out/<id>-sheet.png` (8 key frames, crossings
+  included); with SVG filters, also `--baked`. `npm run test:lottie` runs the pipeline tests. Then `npm run done` as usual.
+- **MCP:** `npm run mcp` serves the same pipeline as tools (`create_composition`, `import_svg_asset`,
+  `apply_motion_primitive`, `patch_layer_ast`, `inspect_annotation`, `distill_motion_curve`, `spawn_proxy_sandbox`,
+  `render_contact_sheet`, `export_dotlottie`). Use them when connected; the npm commands above do the same without.
+- **Export:** the editor's **⤓ Export .lottie** writes `out/<id>.json` and `out/<id>.lottie` (filters baked to images).
 
 ## Themes
 `themes/` holds finished films kept as references (gallery at `/themes/`). Read them only when asked; to

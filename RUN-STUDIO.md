@@ -8,7 +8,9 @@
    git clone https://github.com/ishantperiwal/motionStudio.git
    cd motionStudio
    npm install
+   npm run build
    ```
+   (`npm run build` compiles the Lottie tools; run it again after pulling changes to `src/`.)
 
 ## Keep your films outside the studio (recommended)
 Your scenes, notes and exports can live in their own folder next to the studio, so the studio stays just the tool
@@ -95,6 +97,30 @@ films folder, if you set one).
 npm run new-scene -- my-film
 ```
 It's created in `scenes/` (in your films folder, if you set one). Then open it from the scene picker in the editor.
+
+## Lottie animations
+For animations that ship inside iOS, Android or web apps (icons, badges, coins, celebrations) rather than as videos.
+They open in the same editor and take notes the same way; the editor shows a health check and **⤓ Export .lottie**
+in place of Export MP4.
+1. Make one:
+   ```bash
+   npm run new-lottie -- my-badge
+   ```
+   (Options: `--size 512x512`, `--fps 60`, `--frames 90`. It starts as a flipping coin; ask Claude to turn it into what
+   you want, or give it an SVG.)
+2. Leave notes and **▶ Send to Claude** as usual. Claude checks every change on a contact sheet of key frames before
+   listing it under **To check**. To look at that sheet yourself:
+   ```bash
+   npm run verify-lottie -- my-badge
+   ```
+   It's saved as `out/my-badge-sheet.png`.
+3. Press **⤓ Export .lottie**: `out/` gets `my-badge.json` and `my-badge.lottie`, ready for the app's Lottie player.
+
+**Optional: Lottie tools for Claude (MCP).** The same pipeline is available to Claude as tools. Register it once, from
+the studio folder:
+```bash
+claude mcp add motion-studio-lottie -- node dist/mcp/index.js
+```
 
 ## If something's off
 - **Editor won't load:** make sure `npm run dev` is still running in a terminal.

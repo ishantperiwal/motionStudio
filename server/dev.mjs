@@ -16,12 +16,18 @@ import { dropDoneNotes, scenesWithNotes } from './done.mjs';
 // Chrome just wakes the invisible one and no window opens. Chromium can't decode H.264, so videos in scenes are WebM.
 // Its default GPU memory limit is too small for heavy 3D scenes: past it, frames quietly skip drawing parts (layers come
 // out blank) even in screenshots. A higher limit keeps every frame complete.
-export const CHROME = { args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'] };
+const FALLBACK_BROWSER = process.platform === 'win32'
+  ? ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].find((p) => fs.existsSync(p))
+  : undefined;
+export const CHROME = {
+  args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'],
+  ...(FALLBACK_BROWSER ? { executablePath: FALLBACK_BROWSER } : {}),
+};
 export { ROOT, PROJECT };   // the studio (tool) and the project (its scenes/, notes/, out/): see project.mjs
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.jpeg': 'image/jpeg', '.avif': 'image/avif', '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.md': 'text/plain; charset=utf-8', '.map': 'application/json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.jpeg': 'image/jpeg', '.avif': 'image/avif', '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.md': 'text/plain; charset=utf-8', '.map': 'application/json', '.lottie': 'application/zip',
 };
 
 const inside = (base, p) => { const r = path.resolve(base, '.' + p); return r.startsWith(base + path.sep) || r === base ? r : null; };
@@ -42,10 +48,25 @@ async function listScenes() {
     if (!fs.existsSync(html)) continue;
     const raw = (await fsp.readFile(html, 'utf8')).match(/<title>([^<]*)<\/title>/)?.[1] || d.name;
     const title = raw.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-    out.push({ id: d.name, title });
+    const isLottie = fs.existsSync(path.join(dir, d.name, 'comp.json'));
+    out.push({ id: d.name, title, kind: isLottie ? 'lottie' : 'video' });
   }
   return out;
 }
+
+let compilerModP = null;
+async function getCompiler() {
+  if (!compilerModP) {
+    const entry = path.join(ROOT, 'dist', 'compiler', 'index.js');
+    compilerModP = import(pathToFileURL(entry).href).catch((err) => {
+      compilerModP = null;
+      throw new Error(`Lottie compiler not built (${err.message}). Run "npm run build".`);
+    });
+  }
+  return compilerModP;
+}
+
+const isLottieScene = (scene) => Boolean(scene && fs.existsSync(path.join(PROJECT, 'scenes', scene, 'comp.json')));
 
 async function readJSON(file, fallback) { try { return JSON.parse(await fsp.readFile(file, 'utf8')); } catch { return fallback; } }
 async function writeJSON(file, data) { await fsp.mkdir(path.dirname(file), { recursive: true }); await fsp.writeFile(file, JSON.stringify(data, null, 2) + '\n'); }
@@ -406,8 +427,121 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         const slug = (n.text || 'note').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32).replace(/^-|-$/g, '');
         const note = { id: `${created.replace(/[:.]/g, '-').slice(0, 19)}-${slug}`, created, ...n, reply: null };
         await writeJSON(path.join(PROJECT, 'notes', note.scene, `${note.id}.json`), note);
-        shot(base, note);   // async; the crop appears beside the note
+        if (!isLottieScene(note.scene)) shot(base, note);   // async; Lottie scenes already carry SVG DOM layer hits
         return send(res, 200, note);
+      }
+
+      // ---------- Lottie Studio APIs (health, baked preview, .lottie export, curve distillation, proxy sandbox) ----------
+      if (p === '/api/lottie/health' && req.method === 'GET') {
+        const scene = safeId(url.searchParams.get('scene'));
+        if (!scene || !isLottieScene(scene)) return send(res, 404, { error: 'not a Lottie composition' });
+        const { CompositionManager, inspectLottieHealth } = await getCompiler();
+        const mgr = new CompositionManager(PROJECT, ROOT);
+        const [spec, doc] = await Promise.all([mgr.readSpec(scene), mgr.readAnimation(scene)]);
+        const filterIds = spec.assets.flatMap((a) => a.filters.map((f) => f.layerId));
+        return send(res, 200, {
+          scene,
+          health: inspectLottieHealth(doc, filterIds),
+          layers: doc.layers.map((l) => ({ id: l.ln || l.nm, name: l.nm, ind: l.ind, ty: l.ty })),
+        });
+      }
+      if (p === '/api/lottie/preview-baked' && req.method === 'GET') {
+        const scene = safeId(url.searchParams.get('scene'));
+        if (!scene || !isLottieScene(scene)) return send(res, 404, { error: 'not a Lottie composition' });
+        const scale = Math.min(3, Math.max(1, Math.round(+url.searchParams.get('scale') || 2)));
+        const { CompositionManager, bakeFilteredLayers } = await getCompiler();
+        const mgr = new CompositionManager(PROJECT, ROOT);
+        const compiled = await mgr.compile(scene);
+        const cacheDir = path.join(PROJECT, 'out', '.raster-cache');
+        const baked = await bakeFilteredLayers(compiled.doc, compiled.filters, compiled.defsXml, { scale, format: 'png', cacheDir });
+        return send(res, 200, { doc: baked.doc, bakedCount: baked.baked.length });
+      }
+      if (p === '/api/lottie/export' && req.method === 'POST') {
+        const scene = safeId(url.searchParams.get('scene'));
+        if (!scene || !isLottieScene(scene)) return send(res, 404, { error: 'not a Lottie composition' });
+        const scale = Math.min(3, Math.max(1, Math.round(+url.searchParams.get('scale') || 2)));
+        const format = url.searchParams.get('rasterFmt') === 'webp' ? 'webp' : 'png';
+        const { CompositionManager } = await getCompiler();
+        const mgr = new CompositionManager(PROJECT, ROOT);
+        const resExport = await mgr.exportDotLottie(scene, { scale, format });
+        return send(res, 200, {
+          ok: true,
+          ...resExport,
+          jsonUrl: `/out/${path.basename(resExport.jsonPath)}`,
+          dotLottieUrl: `/out/${path.basename(resExport.dotLottiePath)}`,
+        });
+      }
+      if (p === '/api/lottie/distill' && req.method === 'POST') {
+        const body = await readBody(req);
+        const { distillMotionCurve } = await getCompiler();
+        const distilled = distillMotionCurve(body.samples || [], {
+          fps: body.fps || 60,
+          startFrame: body.startFrame || 0,
+          maxKeyframes: body.maxKeyframes === 3 ? 3 : 4,
+          durationFrames: body.durationFrames,
+        });
+        return send(res, 200, distilled);
+      }
+      // Async MCP annotation dispatch: immediately appends a queued card to To-Check List + logs lightweight payload
+      if (p === '/api/lottie/annotate' && req.method === 'POST') {
+        const body = await readBody(req);
+        const scene = safeId(body.scene);
+        if (!scene) return send(res, 400, { error: 'scene required' });
+        const agent = ['claude', 'antigravity', 'codex'].includes(body.agent) ? body.agent : 'claude';
+        const at = new Date().toISOString();
+        const region = body.region || null;
+        const payload = {
+          id: body.noteId || `${at.replace(/[:.]/g, '-').slice(0, 19)}-ann`,
+          scene,
+          agent,
+          at,
+          frame: body.frame ?? 0,
+          range: body.range ?? null,
+          x: region ? Math.round(region.x + region.w / 2) : (body.x ?? null),
+          y: region ? Math.round(region.y + region.h / 2) : (body.y ?? null),
+          boundingBox: region ? { x: region.x, y: region.y, width: region.w, height: region.h } : null,
+          layers: (body.elements || []).map((e) => e.layerId || e.name),
+          distilledCurve: body.distilledCurve || null,
+          curve: body.curve || null,
+          note: body.text || '',
+        };
+        const inboxFile = path.join(PROJECT, 'notes', '_inbox.jsonl');
+        await fsp.mkdir(path.dirname(inboxFile), { recursive: true });
+        await fsp.appendFile(inboxFile, JSON.stringify(payload) + '\n');
+        // Note stays in the timeline as an orange processing lane until the agent finishes it (npm run done → green To-Check bar)
+        return send(res, 200, { ok: true, payload });
+      }
+      // Ephemeral Proxy Sandbox bridge (MCP spawn_proxy_sandbox <-> Live Editor Modal)
+      const sandboxFile = path.join(PROJECT, 'notes', '_sandbox.json');
+      if (p === '/api/sandbox' && req.method === 'GET') {
+        const cur = await readJSON(sandboxFile, null);
+        return send(res, 200, cur || { status: 'idle' });
+      }
+      if (p === '/api/sandbox' && req.method === 'POST') {
+        const body = await readBody(req);
+        const session = { status: 'open', createdAt: new Date().toISOString(), ...body };
+        await writeJSON(sandboxFile, session);
+        broadcast({ type: 'sandbox', session });
+        return send(res, 200, session);
+      }
+      if (p === '/api/sandbox' && req.method === 'PATCH') {
+        const patch = await readBody(req);
+        const cur = (await readJSON(sandboxFile, {})) || {};
+        if (patch.samples?.length >= 2 && !patch.distilled) {
+          try {
+            const { distillMotionCurve } = await getCompiler();
+            patch.distilled = distillMotionCurve(patch.samples, { fps: cur.fps || patch.fps || 60, maxKeyframes: 4 });
+          } catch {}
+        }
+        const next = { ...cur, ...patch, updatedAt: new Date().toISOString() };
+        await writeJSON(sandboxFile, next);
+        broadcast({ type: 'sandbox', session: next });
+        return send(res, 200, next);
+      }
+      if (p === '/api/sandbox' && req.method === 'DELETE') {
+        await fsp.rm(sandboxFile, { force: true });
+        broadcast({ type: 'sandbox', session: { status: 'idle' } });
+        return send(res, 200, { ok: true });
       }
       if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
         const note = await readJSON(path.join(PROJECT, 'notes', m[1], `${m[2]}.json`), null);
@@ -422,7 +556,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         const before = JSON.stringify(note.region ?? null);
         Object.assign(note, await readBody(req));
         await writeJSON(file, note);
-        if (JSON.stringify(note.region ?? null) !== before) shot(base, note);   // box moved/resized → re-take the crop
+        if (JSON.stringify(note.region ?? null) !== before && !isLottieScene(m[1])) shot(base, note);   // box moved/resized → re-take the crop
         return send(res, 200, note);
       }
 
@@ -455,9 +589,17 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
     for (const dir of ['scenes', 'runtime', 'tokens', 'editor', 'notes', 'references', 'media']) {
       const abs = path.join(['scenes', 'notes', 'references', 'media'].includes(dir) ? PROJECT : ROOT, dir);
       fs.mkdirSync(abs, { recursive: true });
-      fs.watch(abs, { recursive: true }, (_, f) => {
-        if (!f || /(^|\/)\.|~$/.test(f)) return;
+      fs.watch(abs, { recursive: true }, (_, rawF) => {
+        if (!rawF) return;
+        const f = String(rawF).replace(/\\/g, '/');
+        if (/(^|\/)\.|~$/.test(f)) return;
         if (dir === 'references' && !/(^|\/)(ref|moment)\.json$/.test(f)) return;   // not every frame file being written
+        if (dir === 'notes' && f === '_sandbox.json') {
+          readJSON(path.join(PROJECT, 'notes', '_sandbox.json'), null).then((session) => {
+            if (session) broadcast({ type: 'sandbox', session });
+          });
+          return;
+        }
         // the To check list changed (an agent finished a note): a note already in it is done, so it goes (server/done.mjs)
         const m = dir === 'notes' && f.match(/^([^/]+)\/_checklist\.json$/);
         if (m) try { dropDoneNotes(m[1]); } catch {}

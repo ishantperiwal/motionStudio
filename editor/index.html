@@ -21,7 +21,14 @@
   <span id="fpsBadge" hidden title="Every frame is shown fully painted; the scene is too heavy to paint at full speed here, so playback is slower than real time. Export is unaffected."></span>
   <div id="rangeOut" class="muted"></div>
   <div id="rec" title="Hold Shift while scrubbing to record a span note">● REC</div>
+  <span id="lottieHealth" class="health-pill" hidden title="Lottie mobile compatibility & Anti-Bake keyframe health"></span>
   <div class="spacer"></div>
+  <div id="lottieExportGroup" hidden>
+    <select id="lottieScale" title="Filter-to-Raster bake scale for SVG glow/shadow/blur layers"><option value="2">@2x FX</option><option value="3">@3x FX</option><option value="1">@1x FX</option></select>
+    <select id="lottieRasterFmt" title="Raster image format for baked SVG filters"><option value="png">PNG</option><option value="webp">WebP</option></select>
+    <button id="lottieExportBtn" title="Run Filter-to-Raster bake and export .lottie + .json">⤓ Export .lottie</button>
+    <a id="lottieDownloadJson" class="dl-link" hidden download>.json</a>
+  </div>
   <div id="exportGroup">
     <div id="exportSize" title="Export size">
       <button id="exportAxis" title="Step the size by width (W) or by height (H), 100 px at a time">W</button>
@@ -47,6 +54,8 @@
     </div>
     <div id="tools">
         <button id="commentBtn" title="Spot note (S): drag a tight box around what you mean, or click a spot"><span>✎</span>Spot</button>
+        <button id="bgBtn" hidden title="Cycle canvas backdrop: Checkerboard / Dark / Light"><span>◫</span>BG</button>
+        <button id="fxPreviewBtn" hidden title="Toggle Live SVG FX vs. Export Baked Rasters preview"><span>◎</span>FX</button>
       </div>
   </section>
 

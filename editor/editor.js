@@ -1,5 +1,6 @@
 // Motion Studio editor: scrub a scene and leave notes pinned to a frame or a span.
 // The timeline lists the notes; the right panel shows only the note you're on.
+import { openProxySandbox } from './sandbox.js';
 
 const $ = (q, r = document) => r.querySelector(q);
 function h(tag, attrs = {}, ...kids) {
@@ -28,6 +29,7 @@ const st = {
   scenes: [], scene: null, S: null, beats: [], frames: 1, fps: 25, w: 1920, h: 1080, k: 1,
   frame: 0, playing: false, loop: false, range: null, comment: false,
   notes: [], pending: null, sel: null, curveOpen: false, checklist: [],
+  isLottie: false, hoverHit: null, backdrop: 'checker', previewMode: 'live',
 };
 
 // Scrub log (diagnostics): what happened around each drag on the ruler, sent to the dev server when the drag ends
@@ -76,13 +78,19 @@ async function init() {
   loadScene();
   const es = new EventSource('/api/events');
   es.onmessage = (e) => {
-    const { paths = [] } = JSON.parse(e.data);
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'sandbox') {
+      if (msg.session?.status === 'open') launchSandboxModal(msg.session);
+      return;
+    }
+    const { paths = [] } = msg;
     if (paths.some((p) => p.startsWith('editor/'))) return location.reload();
     if (!st.scene && paths.some((p) => p.startsWith('scenes/'))) return location.reload();   // first scene created
     if (paths.some((p) => p.startsWith(`scenes/${st.scene}/`) || p.startsWith('runtime/') || p.startsWith('tokens/'))) reloadScene();
     if (paths.some((p) => p.startsWith(`notes/${st.scene}/`))) loadNotes();
     if (st.scene?.startsWith('ref.') && paths.some((p) => p.startsWith(`references/${st.scene.slice(4)}/`))) loadNotes();   // a finding written
   };
+  fetch('/api/sandbox').then((r) => r.json()).then((s) => { if (s?.status === 'open') launchSandboxModal(s); }).catch(() => {});
 }
 
 // The picker lists films and animatics only. References open in the References panel, in their own editor (?embed).
@@ -145,9 +153,12 @@ addEventListener('message', (e) => {
   const S = frameEl.contentWindow.__studio;
   dlog('ready');
   frameEl.contentWindow.addEventListener('error', (ev) => dlog('scene-error', { msg: ev.message }));
-  Object.assign(st, { S, beats: S.beats(), frames: S.frames, fps: S.fps, w: S.width, h: S.height });
+  bindFrameKeys(frameEl.contentWindow);
+  Object.assign(st, { S, isLottie: !!S.isLottie, beats: S.beats(), frames: S.frames, fps: S.fps, w: S.width, h: S.height, hoverHit: null });
+  syncLottieChrome();
   frameEl.style.width = st.w + 'px'; frameEl.style.height = st.h + 'px';
-  fit(); if (!st.zoomed) fitDefault(); seek(Math.min(st.frame, st.frames - 1), true); loadNotes(); loadExportSizes();
+  fit(); if (!st.zoomed) fitDefault(); seek(Math.min(st.frame, st.frames - 1), true); loadNotes();
+  if (st.isLottie) loadLottieHealth(); else loadExportSizes();
 });
 
 function fit() {
@@ -183,12 +194,13 @@ function seek(f, force = false) {
 }
 
 function setPlaying(p) {
+  if (p && !st.S) return;
   const was = st.playing;
   st.playing = p;
   $('#playBtn').textContent = p ? '❚❚' : '▶';
   const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
   if (p && st.frame >= b) seek(a);
-  if (!p) { clearTimeout(playTimer); seek(Math.round(st.frame), true); }
+  if (!p) { clearTimeout(playTimer); cancelAnimationFrame(playTimer); seek(Math.round(st.frame), true); }
   frameTimes = []; showRate();
   if (p && !was) playLoop();
 }
@@ -226,6 +238,11 @@ let showToken = 0, settleTimer = null;
 // any other frame shows the live scene, exactly as before the cache (it may be a little unfinished). When the
 // playhead rests (SETTLE ms), the rendered frame for that spot replaces the live one.
 function showFrame(f) {
+  if (st.isLottie) {
+    if (!playImg.hidden) playImg.hidden = true;
+    syncLive();
+    return;
+  }
   const t = ++showToken;
   clearTimeout(settleTimer);
   if (ready.has(f)) { playImg.src = ready.get(f); playImg.hidden = false; syncLiveSoon(); }
@@ -273,7 +290,7 @@ const syncLiveSoon = () => { clearTimeout(liveTimer); liveTimer = setTimeout(syn
 // cache bar on the ruler (like After Effects): green = rendered and ready, dim = not yet
 let cachedSet = new Set();
 async function pollCache() {
-  if (st.S && st.scene && !document.hidden) {
+  if (st.S && st.scene && !st.isLottie && !document.hidden) {
     try {
       const r = await (await fetch(`/api/cached?${frameQuery()}`)).json();
       cachedSet = new Set(r.frames); drawCacheBar(); if (!st.playing) preload();
@@ -298,6 +315,26 @@ pollCache();
 // wait for the frame to be painted; the timeout only matters when the tab is hidden (no paints happen there)
 const painted = () => Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 500))]);
 async function playLoop() {
+  if (st.isLottie) {
+    let lastT = performance.now();
+    const stepLottie = (now) => {
+      if (!st.playing || !st.S) return;
+      const dt = Math.max(0, (now - lastT) / 1000);
+      lastT = now;
+      const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
+      let next = st.frame + dt * st.fps;
+      if (next > b) {
+        if (st.loop) next = a + ((next - a) % Math.max(1, b - a + 1));
+        else { seek(b, true); setPlaying(false); return; }
+      }
+      st.frame = next;
+      syncLive();
+      seek(next);
+      playTimer = requestAnimationFrame(stepLottie);
+    };
+    playTimer = requestAnimationFrame(stepLottie);
+    return;
+  }
   while (st.playing && st.S) {
     const t0 = performance.now();
     const [a, b] = st.loop && st.range ? st.range : [0, st.frames - 1];
@@ -631,11 +668,27 @@ const startSpot = (e) => {
   dismissDrag = () => { cancel(); drag = null; dismissDrag = null; drawOverlay(); };
   drawOverlay();
 };
-overlay.addEventListener('pointerdown', (e) => { if (!st.comment) { deselect(); return; } startSpot(e); });
+overlay.addEventListener('pointerdown', (e) => { if (!st.comment) { deselect(); return; } st.hoverHit = null; startSpot(e); });
+overlay.addEventListener('pointermove', (e) => {
+  if (!st.comment || drag || !st.isLottie || !st.S?.inspectAt) return;
+  const r = overlay.getBoundingClientRect();
+  const sx = (e.clientX - r.left) / st.k, sy = (e.clientY - r.top) / st.k;
+  const hit = st.S.inspectAt(sx, sy);
+  const prevId = st.hoverHit?.layerId || null;
+  st.hoverHit = hit;
+  if ((hit?.layerId || null) !== prevId) drawOverlay();
+});
+overlay.addEventListener('pointerleave', () => {
+  if (st.hoverHit) { st.hoverHit = null; drawOverlay(); }
+});
 
 function drawOverlay() {
   overlay.innerHTML = '';
   const box = (r, cls, label) => overlay.append(h('div', { class: `region ${cls}`, style: { left: r.x * st.k + 'px', top: r.y * st.k + 'px', width: r.w * st.k + 'px', height: r.h * st.k + 'px' } }, label ? h('span', { class: 'lbl' }, label) : null));
+  if (st.comment && !drag && st.hoverHit?.rect) {
+    const [rx, ry, rw, rh] = st.hoverHit.rect;
+    box({ x: rx, y: ry, w: rw, h: rh }, 'hover-hit', st.hoverHit.layerId || st.hoverHit.name);
+  }
   if (drag) {
     const x = Math.min(drag.x0, drag.x1), y = Math.min(drag.y0, drag.y1);
     overlay.append(h('div', { class: 'region', style: { left: x + 'px', top: y + 'px', width: Math.abs(drag.x1 - drag.x0) + 'px', height: Math.abs(drag.y1 - drag.y0) + 'px' } }));
@@ -682,7 +735,7 @@ function retarget(n) {
   const fi = n.frame ?? Math.floor(st.frame);
   syncLive();
   const hits = st.S.hitTest(n.region, n.range || [fi, fi]);
-  const elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
+  const elements = hits.elements.slice(0, 6).map(({ name, layerId, text, rect, keyframes }) => ({ name, ...(layerId ? { layerId } : {}), text, rect, ...(keyframes ? { keyframes } : {}) }));
   const beats = hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 }));
   if (n === st.pending || !n.id) Object.assign(n, { elements, beats });
   else save(n, { region: n.region, elements, beats });
@@ -732,8 +785,8 @@ function startNote({ region = null }) {
   syncLive();
   const hits = region ? st.S.hitTest(region, range || [fi, fi])
     : { beats: range ? st.beats.filter((b) => b.f1 >= range[0] && b.f0 <= range[1] && b.f1 > b.f0).map((b) => ({ name: b.name, f0: b.f0, f1: b.f1 })) : [], elements: [] };
-  let elements = hits.elements.slice(0, 6).map(({ name, text, rect }) => ({ name, text, rect }));
-  st.pending = { text: '', frame: fi, range, region, beats: hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 })), elements, curve: null };
+  let elements = hits.elements.slice(0, 6).map(({ name, layerId, text, rect, keyframes }) => ({ name, ...(layerId ? { layerId } : {}), text, rect, ...(keyframes ? { keyframes } : {}) }));
+  st.pending = { text: '', frame: fi, range, region, beats: hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 })), elements, curve: null, distilledCurve: null };
   st.sel = null; st.selF = null; st.curveOpen = false; st.editing = true; st.focusText = true;
   setComment(false);
   buildTimeline(); renderPanel(); drawOverlay();
@@ -804,7 +857,7 @@ function persist(n) {
       if (!st.notes.includes(n)) st.notes.push(n);
       buildTimeline();
     } else {
-      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [], media: n.media || [] }));
+      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, distilledCurve: n.distilledCurve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [], media: n.media || [] }));
       const lane = [...lanes.children].find((l) => !l._done && (l._note === n || l._note?.id === n.id));
       if (lane) lane.querySelector('.name').lastChild.textContent = n.text;
     }
@@ -958,8 +1011,9 @@ function renderPanel() {
         h('button', { class: 'check-all', title: 'All checked — clear the list', onclick: checkAll }, '✓ Check all')),
         ...st.checklist.map((it) => {
           const replying = st.replyTo === it.id;
-          const card = h('div', { class: `check-it ${replying ? 'replying' : ''} ${st.selD === it.id ? 'sel' : ''}`, title: 'Jump there', onclick: () => selectDone(it) },
-            h('span', { class: 'fr' }, it.range ? `${it.range[0]}–${it.range[1]}` : `f ${it.frame}`),
+          const queued = it.status === 'queued';
+          const card = h('div', { class: `check-it ${queued ? 'queued' : ''} ${replying ? 'replying' : ''} ${st.selD === it.id ? 'sel' : ''}`, title: 'Jump there', onclick: () => selectDone(it) },
+            h('span', { class: 'fr' }, it.range ? `${it.range[0]}–${it.range[1]}` : `f ${it.frame}`, queued ? h('span', { class: 'q-tag' }, `Queued · ${agentName(it.agent)}`) : null),
             h('span', { class: 'tx' }, it.text),
             // while replying: ✕ cancels the reply, ↑ sends it (✓ never dismisses an item you're replying to)
             h('div', { class: 'check-btns' },
@@ -989,15 +1043,40 @@ function renderPanel() {
     return;
   }
   const editing = n === st.pending || st.editing || !n.text?.trim();
+  const isRef = st.scene?.startsWith('ref.'), sent = processing(n);
   const del = h('button', { class: 'del', title: 'Delete this note (⌫)', onclick: () => removeNote(n) });
   del.innerHTML = trash;
+
+  // Clicking a processing bar in the timeline shows the warm amber "Queued · <Agent>" card
+  if (sent && !editing && !isRef) {
+    const frLbl = n.range ? `${n.range[0]}–${n.range[1]}` : `f ${n.frame}`;
+    const card = h('div', { class: 'proc-card' },
+      h('div', { class: 'proc-head' },
+        h('div', { class: 'proc-meta' },
+          h('span', { class: 'fr' }, frLbl),
+          h('span', { class: 'q-tag', title: `Sent to ${agentName(n.sentTo)}; moves to To check once finished` }, `Queued · ${agentName(n.sentTo)}`)),
+        del),
+      n.followUp ? h('div', { class: 'followup' }, h('b', {}, 'Follow-up on: '), n.followUp) : null,
+      n.elements?.length ? h('div', { class: 'target' }, h('span', { class: 'muted' }, 'In the box: '), n.elements.slice(0, 3).map((e) => e.name).join(' · ')) : null,
+      h('div', { class: 'proc-tx', title: `With ${agentName(n.sentTo)} · click to edit`, onclick: () => { st.editing = true; st.focusText = true; renderPanel(); } }, n.text));
+    const chips = [
+      ...(n.media || []).map((m) => h('a', { class: 'att-chip', href: m.url, target: '_blank', title: `${m.label} · ${m.name}` }, mediaThumb(m), h('b', {}, m.label), h('span', {}, m.name))),
+      ...(n.useRefs || []).map((u) => h('span', { class: 'att-chip ref', onclick: (e) => { e.stopPropagation(); openRefMoment(u, n); } }, h('span', { class: 'fmark' }, '◆'), h('span', {}, u.name))),
+      n.distilledCurve ? h('span', { class: 'att-chip' }, `✦ ${n.distilledCurve.keyframeCount} kf distilled`) : null,
+    ].filter(Boolean);
+    if (chips.length) card.append(h('div', { class: 'att-row' }, chips));
+    panel.append(card);
+    if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, agentName(n.sentTo)), n.reply));
+    return;
+  }
+
   const head = h('div', { class: 'head' },
     h('span', { class: 'where' }, where(n)),
     h('div', { class: 'head-btns' },
-      st.scene?.startsWith('ref.')
+      isRef
         ? h('button', { class: 'resolve save-moment', title: 'Save this moment (⌘↵): its frames and measurements are captured at once', onclick: () => saveMoment(n) }, '◆ Save')
-        : processing(n)
-        ? h('span', { class: 'saved proc', title: `Sent to ${agentName(n.sentTo)}; it disappears when ${agentName(n.sentTo)} has worked it` }, `With ${agentName(n.sentTo)}`)
+        : sent
+        ? h('span', { class: 'q-tag', title: `Sent to ${agentName(n.sentTo)}; moves to To check once finished` }, `Queued · ${agentName(n.sentTo)}`)
         : [n.id && n.text?.trim() && !editing ? h('span', { class: 'saved draft', title: 'Saved, not sent yet' }, 'Draft') : null,
            h('button', { class: 'resolve send', title: `Send this note to ${pickedName()} (⌘↵). The top Send button sends all unsent notes`, onclick: () => sendNote(n) }, '↑')],
       del));
@@ -1005,7 +1084,6 @@ function renderPanel() {
 
   if (n.followUp) panel.append(h('div', { class: 'followup' }, h('b', {}, 'Follow-up on: '), n.followUp));
   if (n.elements?.length) panel.append(h('div', { class: 'target' }, h('span', { class: 'muted' }, 'In the box: '), n.elements.slice(0, 3).map((e) => e.name).join(' · ')));
-  const isRef = st.scene?.startsWith('ref.'), sent = processing(n);
   const rerender = () => { const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
   const setUse = (list) => { save(n, { useRefs: list }); rerender(); };
   const setCurve = (c) => { save(n, { curve: c }); st.curveOpen = !!c; const keep = $('#panel textarea')?.value; renderPanel(); if (keep != null && $('#panel textarea')) $('#panel textarea').value = keep; };
@@ -1045,6 +1123,22 @@ function renderPanel() {
       ? h('button', { class: `cue ${st.curveOpen ? 'on' : ''}`, title: 'Easing you want — click to edit', onclick: () => { st.curveOpen = !st.curveOpen; renderPanel(); } },
           miniCurve(n.curve), `cubic-bezier(${n.curve.join(', ')})`)
       : h('button', { class: 'cue add', onclick: () => setCurve([...(st.S.tokens?.ease?.move || [0.45, 0, 0.2, 1])]) }, '+ easing'),
+    !isRef
+      ? h('button', {
+          class: `cue ${n.distilledCurve ? 'on' : 'add'}`,
+          title: 'Demonstrate motion feel on a single proxy shape and distill into 3–4 clean Lottie keyframes',
+          onclick: () => launchSandboxModal({
+            sceneId: st.scene,
+            layerId: n.elements?.[0]?.layerId || n.elements?.[0]?.name || null,
+            property: 'position',
+            fps: st.fps,
+            prompt: 'Sculpt the motion feel you want for this note — drag the block (hold Shift to lock H/V), box-select keyframes, or double-click the curve to add & drag keyframes.',
+          }, (res) => {
+            save(n, { distilledCurve: res.distilled, curve: res.distilled.primaryBezier });
+            rerender();
+          }),
+        }, n.distilledCurve ? `✦ ${n.distilledCurve.summary || `${n.distilledCurve.keyframeCount} kf feel`}` : '+ motion feel')
+      : null,
     n.range
       ? (n.region
           ? h('button', { class: 'cue', title: 'Remove the marked area', onclick: () => removeArea(n) }, '✕ area')
@@ -1378,6 +1472,21 @@ async function sendNote(n) {
   delete n._fresh; st.editing = false; st.pick = null;
   document.activeElement?.blur?.();   // out of the text box, so the panel redraws as sent
   await persist(n);
+  if (st.isLottie) {
+    // Non-blocking Lottie flow: immediately append to To-Check list asynchronously while dispatching lightweight MCP payload
+    fetch('/api/lottie/annotate', json('POST', {
+      scene: st.scene,
+      noteId: n.id,
+      agent: sendAgent(),
+      frame: n.frame,
+      range: n.range,
+      region: n.region,
+      elements: n.elements || [],
+      curve: n.curve || null,
+      distilledCurve: n.distilledCurve || null,
+      text: n.text,
+    })).catch(() => {});
+  }
   await sendNotes([n.id]);   // just this note: drafts elsewhere on the scene stay unsent
 }
 $('#sendBtn').onclick = () => sendNotes();
@@ -1431,11 +1540,44 @@ addEventListener('copy', (e) => {
   e.preventDefault(); e.clipboardData.setData('text/plain', noteContext(n));
 });
 
-addEventListener('keydown', (e) => {
-  if (e.target.closest('input, textarea, select')) return;
+const boundFrameWins = new WeakSet();
+function bindFrameKeys(win) {
+  try {
+    if (!win || boundFrameWins.has(win)) return;
+    boundFrameWins.add(win);
+    win.addEventListener('keydown', onGlobalKeyDown);
+  } catch {}
+}
+frameEl?.addEventListener('load', () => bindFrameKeys(frameEl.contentWindow));
+
+// Keep focus off non-text controls after pointer clicks / select changes so Space always plays/pauses.
+addEventListener('click', (e) => {
+  const ctrl = e.target?.closest?.('button, input[type="range"]');
+  if (ctrl && e.detail > 0) ctrl.blur();
+});
+addEventListener('change', (e) => {
+  const ctrl = e.target?.closest?.('select, input[type="range"]');
+  if (ctrl) ctrl.blur();
+});
+
+const isTextTarget = (el) => !!el?.closest?.('textarea, [contenteditable="true"], [contenteditable=""]') ||
+  (el?.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|file|color|image|hidden)$/i.test(el.type || 'text'));
+
+function onGlobalKeyDown(e) {
+  if (isTextTarget(e.target)) return;
+  const isSpace = e.key === ' ' || e.code === 'Space';
+  if (isSpace) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    if (e.repeat) return;
+    const ctrl = e.target?.closest?.('button, select, input[type="range"]');
+    if (ctrl) ctrl.blur();
+    setPlaying(!st.playing);
+    return;
+  }
+  if (e.target?.closest?.('select')) return;
   const fi = Math.round(st.frame);
   switch (e.key) {
-    case ' ': e.preventDefault(); setPlaying(!st.playing); break;
     case 'ArrowRight': if (!st.rec) setPlaying(false); seek(fi + (e.altKey ? 10 : 1)); break;
     case 'ArrowLeft': if (!st.rec) setPlaying(false); seek(fi - (e.altKey ? 10 : 1)); break;
     case 'Home': seek(st.range ? st.range[0] : 0); break;
@@ -1456,6 +1598,137 @@ addEventListener('keydown', (e) => {
     case 'Escape': if (EMBED && !st.pending && !st.sel && !st.selF && !st.comment && !st.rec) closePanel(); else { dismissNote(); if (st.selF) { st.selF = null; setRange(null); buildTimeline(); renderPanel(); drawOverlay(); } } break;
     default: return;
   }
-});
+}
+addEventListener('keydown', onGlobalKeyDown);
+
+// ------------------------------------------------------------------ Lottie Studio chrome & Proxy Sandbox
+function syncLottieChrome() {
+  const on = !!st.isLottie;
+  $('#exportGroup').hidden = on;
+  $('#lottieExportGroup').hidden = !on;
+  $('#lottieHealth').hidden = !on;
+  $('#bgBtn').hidden = !on;
+  $('#fxPreviewBtn').hidden = !(on && (st.S?.filtersCount || 0) > 0);
+  $('#cacheBar').style.display = on ? 'none' : 'block';
+  if (on) {
+    $('#fpsBadge').hidden = true;
+    const b = $('#lottieExportBtn');
+    if (b && b.dataset.scene !== st.scene) {
+      delete b.dataset.file;
+      b.dataset.scene = st.scene;
+      b.classList.remove('on');
+      b.textContent = '⤓ Export .lottie';
+      const dl = $('#lottieDownloadJson');
+      if (dl) dl.hidden = true;
+    }
+  }
+}
+
+async function loadLottieHealth() {
+  if (!st.isLottie || !st.scene) return;
+  const pill = $('#lottieHealth');
+  try {
+    const { health } = await (await fetch(`/api/lottie/health?scene=${encodeURIComponent(st.scene)}`)).json();
+    const kb = Math.max(1, Math.round((health.jsonBytes || 0) / 1024));
+    const fx = health.filterLayers?.length || 0;
+    const status = !health.mobileReady ? 'Mobile issue' : !health.antiBakePass ? 'Dense keyframes' : fx > 0 ? `${fx} FX to bake` : 'iOS/Android OK';
+    pill.textContent = `${health.totalKeyframes} kf · ${kb} KB · ${status}`;
+    pill.className = `health-pill ${!health.mobileReady ? 'err' : (!health.antiBakePass || fx > 0) ? 'warn' : ''}`;
+    pill.title = (health.issues || []).map((i) => `[${i.severity}] ${i.message}`).join('\n') || 'Minimal keyframes & mobile ready';
+    pill.hidden = false;
+  } catch {
+    pill.hidden = true;
+  }
+}
+
+function launchSandboxModal(session, onCustomSubmit) {
+  setPlaying(false);
+  openProxySandbox({
+    session,
+    onSubmit: (res) => {
+      if (onCustomSubmit) {
+        onCustomSubmit(res);
+      } else {
+        let open = openNote();
+        if (!open && !session?.id) {
+          startNote({});
+          open = st.pending;
+        }
+        if (open) {
+          save(open, { distilledCurve: res.distilled, curve: res.distilled.primaryBezier });
+          renderPanel();
+        }
+      }
+    },
+    onCancel: () => {
+      if (session?.id) {
+        fetch('/api/sandbox', json('PATCH', { status: 'cancelled' })).catch(() => {});
+      }
+    },
+  });
+}
+
+const BACKDROPS = ['checker', 'dark', 'light'];
+$('#bgBtn').onclick = () => {
+  if (!st.S?.setBackdrop) return;
+  st.backdrop = BACKDROPS[(BACKDROPS.indexOf(st.backdrop) + 1) % BACKDROPS.length];
+  st.S.setBackdrop(st.backdrop);
+  $('#bgBtn').title = `Canvas backdrop: ${st.backdrop} (click to cycle)`;
+};
+
+$('#fxPreviewBtn').onclick = async () => {
+  if (!st.S?.setPreviewMode) return;
+  const btn = $('#fxPreviewBtn');
+  const next = st.previewMode === 'live' ? 'baked' : 'live';
+  btn.disabled = true;
+  try {
+    await st.S.setPreviewMode(next);
+    st.previewMode = next;
+    btn.classList.toggle('on', next === 'baked');
+    btn.innerHTML = next === 'baked' ? '<span>▣</span>Baked' : '<span>◎</span>FX';
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+$('#lottieExportBtn').onclick = async () => {
+  const btn = $('#lottieExportBtn'), jsonLink = $('#lottieDownloadJson');
+  if (btn.dataset.file) {
+    const a = h('a', { href: btn.dataset.file, download: '' }); document.body.append(a); a.click(); a.remove();
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Baking FX & packaging…';
+  try {
+    const scale = $('#lottieScale').value || '2';
+    const rasterFmt = $('#lottieRasterFmt').value || 'png';
+    const res = await fetch(`/api/lottie/export?scene=${encodeURIComponent(st.scene)}&scale=${scale}&rasterFmt=${rasterFmt}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Lottie export failed');
+    const kb = Math.max(1, Math.round((data.dotLottieBytes || 0) / 1024));
+    btn.textContent = `⤓ .lottie (${kb} KB)`;
+    btn.dataset.file = data.dotLottieUrl;
+    btn.dataset.scene = st.scene;
+    btn.classList.add('on');
+    jsonLink.href = data.jsonUrl;
+    jsonLink.download = `${st.scene}.json`;
+    jsonLink.hidden = false;
+    const a = h('a', { href: data.dotLottieUrl, download: `${st.scene}.lottie` });
+    document.body.append(a); a.click(); a.remove();
+    loadLottieHealth();
+  } catch (err) {
+    btn.textContent = 'Export failed — retry';
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+  }
+};
+$('#lottieScale').onchange = $('#lottieRasterFmt').onchange = () => {
+  const btn = $('#lottieExportBtn');
+  delete btn.dataset.file; btn.classList.remove('on'); btn.textContent = '⤓ Export .lottie';
+  $('#lottieDownloadJson').hidden = true;
+};
 
 init();

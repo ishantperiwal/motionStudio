@@ -1,10 +1,14 @@
 node_modules/
+dist/
 out/
 .DS_Store
 # per-machine working data
 # each scene's notes, their crops and pasted reference images (any format), and its To-check list
 notes/*/
 notes/_go.json
+notes/_go.*.json
+notes/_sandbox.json
+notes/_inbox.jsonl
 !notes/.gitkeep
 
 # scenes are per-project work (like notes): they stay on your machine
