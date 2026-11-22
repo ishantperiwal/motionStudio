@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CompositionManager,
   distillMotionCurve,
+  geometry,
   inspectLottieHealth,
   normalizeSvgToLottieLayers,
   patchLayerInLast,
@@ -211,7 +212,7 @@ test('All parametric primitives (trimStroke, staggeredEntrance, squashAndStretch
   }
 });
 
-test('MCP Server exposes all 7 core Lottie Studio tools over stdio JSON-RPC', async () => {
+test('MCP Server exposes the core Lottie Studio tools over stdio JSON-RPC', async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-mcp-test-'));
   const proc = spawn(process.execPath, [path.join(STUDIO_ROOT, 'dist', 'mcp', 'index.js'), '--project', tmpDir], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -259,7 +260,6 @@ test('MCP Server exposes all 7 core Lottie Studio tools over stdio JSON-RPC', as
       'apply_motion_primitive',
       'inspect_annotation',
       'patch_layer_ast',
-      'spawn_proxy_sandbox',
       'export_dotlottie',
     ]) {
       assert.ok(names.includes(expected), `Missing MCP tool: ${expected}`);
@@ -290,7 +290,7 @@ test('MCP Server exposes all 7 core Lottie Studio tools over stdio JSON-RPC', as
   }
 });
 
-test('Dev Server Lottie Studio APIs: health, distill, sandbox, async annotate -> To-Check, and export', async () => {
+test('Dev Server Lottie Studio APIs: health, distill, async annotate -> To-Check, and export', async () => {
   const srv = await startServer({ port: 0, watch: false, quiet: true });
   const port = srv.address().port;
   const base = `http://localhost:${port}`;
@@ -338,27 +338,7 @@ test('Dev Server Lottie Studio APIs: health, distill, sandbox, async annotate ->
     assert.equal(ann.payload.frame, 12);
     assert.deepEqual(ann.payload.layers, ['coin-front']);
 
-    // 4. Proxy sandbox session round-trip
-    const opened = await (await fetch(`${base}/api/sandbox`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: 'sbx-test', sceneId: testId, property: 'position', fps: 60 }),
-    })).json();
-    assert.equal(opened.status, 'open');
-
-    const submitted = await (await fetch(`${base}/api/sandbox`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        status: 'submitted',
-        samples: [{ t: 0, x: 0, y: 0 }, { t: 250, x: 120, y: 0 }, { t: 500, x: 100, y: 0 }],
-      }),
-    })).json();
-    assert.equal(submitted.status, 'submitted');
-    assert.ok(submitted.distilled?.keyframeCount <= 4);
-    await fetch(`${base}/api/sandbox`, { method: 'DELETE' });
-
-    // 5. Export .lottie + .json endpoint
+    // 4. Export .lottie + .json endpoint
     const exp = await (await fetch(`${base}/api/lottie/export?scene=${testId}&scale=2&rasterFmt=png`, { method: 'POST' })).json();
     assert.equal(exp.ok, true);
     assert.equal(exp.bakedLayers.length, 1);
@@ -396,4 +376,36 @@ test('SVG linearGradient & radialGradient compile to native Lottie gf gradient f
   assert.ok(gf && gf.ty === 'gf', 'Expected native Lottie gradient fill (gf)');
   assert.equal(gf.t, 1);
   assert.equal(gf.g.p, 2);
+});
+
+test('Geometry kit constructs exact shapes, booleans and fillets, and matches morph paths without changing them', () => {
+  // rounded triangle: 3 straight sides + 3 fillet arcs
+  const tri = geometry.toLottiePath(geometry.polygon(0, 0, 100, 3, { cornerRadius: 18 }));
+  assert.equal(tri.v.length, 6);
+  // a straight side's handles lie exactly on the line between its two vertices
+  const straight = tri.v.filter((p, j) => {
+    const q = tri.v[(j + 1) % 6];
+    const d = [q[0] - p[0], q[1] - p[1]];
+    const cross = (h) => Math.abs(h[0] * d[1] - h[1] * d[0]) / Math.hypot(...d);
+    return Math.hypot(...d) > 50 && cross(tri.o[j]) < 1e-6 && cross(tri.i[(j + 1) % 6]) < 1e-6;
+  });
+  assert.equal(straight.length, 3, 'three sides stay true straight lines');
+
+  // boolean union of circles is one contour; filleting it keeps one contour
+  const clover = geometry.roundCorners(
+    geometry.union(...[45, 135, 225, 315].map((a) => geometry.circle(48 * Math.cos((a * Math.PI) / 180), 48 * Math.sin((a * Math.PI) / 180), 52)), geometry.circle(0, 0, 55)),
+    10,
+  );
+  const cloverPath = geometry.toLottiePath(clover);
+  assert.ok(cloverPath.v.length >= 8);
+  assert.throws(() => geometry.toLottiePath(geometry.subtract(geometry.circle(0, 0, 50), geometry.circle(0, 0, 20))), /contours/);
+
+  // matching: equal counts, start at the top, and every split point lies on the original outline
+  const [a, b] = geometry.matchPaths([tri, cloverPath], 96);
+  assert.equal(a.v.length, 96);
+  assert.equal(b.v.length, 96);
+  assert.ok(a.v[0][1] < -80 && Math.abs(a.v[0][0]) < 2, 'triangle starts at the top of its rounded tip');
+  const area = (p) => geometry.area(geometry.fromLottiePath(p));
+  assert.ok(Math.abs(area(a) - area(tri)) / area(tri) < 1e-4, 'matched triangle keeps its exact outline');
+  assert.ok(Math.abs(area(b) - area(cloverPath)) / area(cloverPath) < 1e-4, 'matched clover keeps its exact outline');
 });

@@ -4,11 +4,12 @@
 //   npm run ref -- compare <ref>/<moment> <scene> <a-b>
 //       one image: the reference moment (top row) over the film's frames a–b (bottom row), at the same four points
 //       (start, ⅓, ⅔, end), to check a scene against the moment it borrows from. Written to out/compare/.
+//   npm run ref -- remeasure <ref>/<moment>   measure a moment again (one that failed), with its saved span and box
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, PROJECT } from '../server/project.mjs';
-import { addLink, addFile, listRefs, listMoments, jobs, readRef, PREFIX, REFS } from '../server/refs.mjs';
+import { addLink, addFile, listRefs, listMoments, jobs, readRef, remeasureMoment, PREFIX, REFS } from '../server/refs.mjs';
 
 const [cmd, ...args] = process.argv.slice(2);
 const rel = (p) => path.relative(process.cwd(), p) || '.';
@@ -27,6 +28,10 @@ if (cmd === 'list') {
   const r = await readRef(ref.id);
   if (r.status !== 'ready') { console.error(`failed: ${r.error}`); process.exit(1); }
   console.log(`ready: ${r.name || r.id} · ${r.video.w}×${r.video.h} · ${r.video.fps} fps · ${r.video.duration.toFixed(1)}s\nopen it from References (R) in the editor`);
+} else if (cmd === 'remeasure' && args[0]?.includes('/')) {
+  const [ref, mid] = args[0].split('/');
+  await remeasureMoment(ref, mid);
+  console.log(`measured · references/${ref}/moments/${mid}/`);
 } else if (cmd === 'compare' && args.length >= 3) {
   const [refMoment, scene, span] = args;
   const [rid, mid0] = refMoment.replace(PREFIX, '').split('/');
@@ -53,6 +58,6 @@ if (cmd === 'list') {
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`${rel(file)}\n  top: the reference moment at its start, ⅓, ⅔, end · bottom: ${scene} frames ${ours.join(', ')}`);
 } else {
-  console.log('usage: npm run ref -- list | add <link|file> | compare <ref>/<moment> <scene> <a-b>');
+  console.log('usage: npm run ref -- list | add <link|file> | compare <ref>/<moment> <scene> <a-b> | remeasure <ref>/<moment>');
 }
 process.exit(0);

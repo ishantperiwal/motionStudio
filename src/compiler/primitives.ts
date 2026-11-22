@@ -1,3 +1,4 @@
+import { matchPaths } from './geometry.js';
 import {
   clampBezierX,
   resolveDurationFrames,
@@ -11,15 +12,19 @@ import type {
   Faux3DFlipParams,
   KeyframeTrackParams,
   LottieAnimatedProp,
+  LottieBezierPath,
   LottieDocument,
   LottieKeyframe,
   LottieLayer,
   LottiePositionProp,
   LottieProp,
+  LottieShapeItem,
   LottieShapeLayer,
+  LottieShapePath,
   LottieShapeTrim,
   MotionPrimitiveSpec,
   MotionTokens,
+  ShapeMorphParams,
   SpringMoveParams,
   SpringToken,
   SquashAndStretchParams,
@@ -740,6 +745,80 @@ export function applyKeyframeTrack(
   return { layerId: layer.ln ?? layer.nm, property: params.property, keyframes: kfs.length };
 }
 
+function findShapeItem<T extends LottieShapeItem['ty']>(
+  items: LottieShapeItem[],
+  ty: T,
+): Extract<LottieShapeItem, { ty: T }> | null {
+  for (const item of items) {
+    if (item.ty === ty) return item as Extract<LottieShapeItem, { ty: T }>;
+    if (item.ty === 'gr') {
+      const found = findShapeItem(item.it, ty);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Morphs a shape layer's first path (and gradient colours) through a list of poses: one keyframe per pose,
+ * holds as hold keyframes. Poses may have any vertex counts: they're matched exactly (`matchPaths`) so
+ * native players interpolate them.
+ */
+export function applyShapeMorph(
+  doc: LottieDocument,
+  params: ShapeMorphParams,
+  tokens: MotionTokens,
+): { layerId: string; poses: number; keyframes: number } {
+  const layer = findLayer(doc, params.layerId);
+  if (layer.ty !== 4) throw new Error(`shapeMorph: "${params.layerId}" is not a shape layer`);
+  const shapes = (layer as LottieShapeLayer).shapes;
+  const sh = findShapeItem(shapes, 'sh');
+  if (!sh) throw new Error(`shapeMorph: "${params.layerId}" has no path to morph`);
+  if (params.stops.length < 2) throw new Error('shapeMorph: needs at least two stops');
+  // same vertex count, winding and start point for every pose, by exact curve splitting
+  const matched = matchPaths(params.stops.map((s) => s.path), params.points ?? 96);
+  const stops = params.stops.map((s, idx) => ({ ...s, path: matched[idx]! }));
+  const roundPath = (p: LottieBezierPath): LottieBezierPath => ({
+    c: p.c,
+    v: p.v.map(([x, y]) => [round2(x), round2(y)]),
+    i: p.i.map(([x, y]) => [round2(x), round2(y)]),
+    o: p.o.map(([x, y]) => [round2(x), round2(y)]),
+  });
+
+  const pathKfs = stops.map((stop, idx): LottieKeyframe<LottieBezierPath[]> => {
+    const next = stops[idx + 1];
+    const s = [roundPath(stop.path)];
+    if (!next) return { t: round2(stop.t), s };
+    if (stop.hold) return { t: round2(stop.t), s, h: 1 };
+    const [x1, y1, x2, y2] = resolveEaseToken(stop.ease, tokens, 'move');
+    return { t: round2(stop.t), s, e: [roundPath(next.path)], o: { x: x1, y: y1 }, i: { x: x2, y: y2 } };
+  });
+  sh.ks = { a: 1, k: pathKfs } as unknown as LottieShapePath['ks'];
+  let keyframes = pathKfs.length;
+
+  if (stops.some((s) => s.colors)) {
+    const gf = findShapeItem(shapes, 'gf');
+    if (!gf) throw new Error(`shapeMorph: "${params.layerId}" has no gradient fill for colors`);
+    const colorStops = stops.map((s) => s.colors ?? stops.find((x) => x.colors)!.colors!);
+    const len = colorStops[0]!.length;
+    if (colorStops.some((c) => c.length !== len)) throw new Error('shapeMorph: every colors array needs the same length');
+    gf.g = {
+      p: len / 4,
+      k: makeVectorTrack(
+        stops.map((stop, idx) => ({
+          t: stop.t,
+          v: colorStops[idx]!,
+          ease: resolveEaseToken(stop.ease, tokens, 'move'),
+          hold: stop.hold,
+        })),
+      ),
+    };
+    keyframes += stops.length;
+  }
+
+  return { layerId: layer.ln ?? layer.nm, poses: stops.length, keyframes };
+}
+
 export function applyMotionPrimitive(
   doc: LottieDocument,
   spec: MotionPrimitiveSpec,
@@ -758,5 +837,7 @@ export function applyMotionPrimitive(
       return applySquashAndStretch(doc, spec, tokens);
     case 'keyframeTrack':
       return applyKeyframeTrack(doc, spec);
+    case 'shapeMorph':
+      return applyShapeMorph(doc, spec, tokens);
   }
 }

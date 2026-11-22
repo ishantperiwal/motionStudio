@@ -146,6 +146,11 @@ addEventListener('paste', (e) => {
   if (f) { e.preventDefault(); return tab === 'files' ? uploadFiles(e.clipboardData.files) : addFile(f); }
   const t = e.clipboardData?.getData('text/plain')?.trim();
   if (t && /^https?:\/\/\S+$/.test(t)) { e.preventDefault(); addLink(t); }
+  // SVG markup copied from a design tool goes into the Files tab as an .svg
+  const svg = e.clipboardData?.getData('image/svg+xml')?.trim() || t;
+  if (tab === 'files' && svg && /^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>][\s\S]*<\/svg>$/i.test(svg)) {
+    e.preventDefault(); uploadFiles([new File([svg], 'pasted.svg', { type: 'image/svg+xml' })]);
+  }
 });
 
 // live: download progress and finished conversions

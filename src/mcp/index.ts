@@ -402,155 +402,7 @@ export function createMotionStudioMcpServer(): McpServer {
     },
   );
 
-  // 6. spawn_proxy_sandbox
-  server.tool(
-    'spawn_proxy_sandbox',
-    'Activate the Ephemeral Proxy Sandbox modal in the Motion Studio UI for a single-shape feel demonstration (live drag or pose-pinning), returning raw performance data and distilled 3–4 Lottie keyframes.',
-    {
-      sceneId: z.string(),
-      layerId: z.string().optional(),
-      property: z.enum(['position', 'scale', 'rotation', 'flip', 'stagger']).default('position'),
-      prompt: z.string().default('Drag or pin poses to demonstrate the motion feel you want'),
-      shape: z.enum(['card', 'circle', 'coin', 'pill']).default('card'),
-      fps: z.number().positive().default(60),
-      waitForSubmission: z.boolean().default(true),
-      timeoutMs: z.number().int().positive().default(120000),
-    },
-    async (args) => {
-      const sessionId = `sbx-${crypto.randomBytes(4).toString('hex')}`;
-      const payload = {
-        id: sessionId,
-        sceneId: args.sceneId,
-        layerId: args.layerId ?? null,
-        property: args.property,
-        prompt: args.prompt,
-        shape: args.shape,
-        fps: args.fps,
-        status: 'open' as const,
-        createdAt: new Date().toISOString(),
-      };
-
-      const sandboxFile = path.join(PROJECT_DIR, 'notes', '_sandbox.json');
-      await fs.mkdir(path.dirname(sandboxFile), { recursive: true });
-      await fs.writeFile(sandboxFile, JSON.stringify(payload, null, 2) + '\n', 'utf8');
-
-      // Notify live dev server if running so SSE pops open the modal immediately
-      try {
-        await fetch(`${STUDIO_URL}/api/sandbox`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        // Dev server might not be running yet; file is still persisted for pickup
-      }
-
-      if (!args.waitForSubmission) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                {
-                  ok: true,
-                  status: 'awaiting_user',
-                  sessionId,
-                  editorUrl: `${STUDIO_URL}/editor/#${args.sceneId}@0`,
-                  message: 'Proxy sandbox opened in editor. Poll or wait for user submission.',
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-        };
-      }
-
-      const deadline = Date.now() + args.timeoutMs;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 400));
-        try {
-          const cur = JSON.parse(await fs.readFile(sandboxFile, 'utf8')) as {
-            id: string;
-            status: string;
-            samples?: RawPointerSample[];
-            mode?: string;
-            distilled?: unknown;
-          };
-          if (cur.id !== sessionId) break;
-          if (cur.status === 'cancelled') {
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ ok: false, status: 'cancelled', sessionId }) }],
-            };
-          }
-          if (cur.status === 'submitted') {
-            if (cur.distilled) {
-              return {
-                content: [
-                  {
-                    type: 'text',
-                    text: JSON.stringify(
-                      {
-                        ok: true,
-                        status: 'submitted',
-                        sessionId,
-                        mode: cur.mode ?? 'keyframe-editor',
-                        distilled: cur.distilled,
-                        ...(cur.samples ? { sampleCount: cur.samples.length, rawSamples: cur.samples } : {}),
-                      },
-                      null,
-                      2,
-                    ),
-                  },
-                ],
-              };
-            }
-            if (cur.samples && cur.samples.length >= 2) {
-              const distilled = distillMotionCurve(cur.samples, { fps: args.fps, maxKeyframes: 4 });
-              return {
-                content: [
-                  {
-                    type: 'text',
-                    text: JSON.stringify(
-                      {
-                        ok: true,
-                        status: 'submitted',
-                        sessionId,
-                        mode: cur.mode ?? 'pointer',
-                        sampleCount: cur.samples.length,
-                        rawSamples: cur.samples,
-                        distilled,
-                      },
-                      null,
-                      2,
-                    ),
-                  },
-                ],
-              };
-            }
-          }
-        } catch {
-          // continue polling
-        }
-      }
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              ok: false,
-              status: 'timeout',
-              sessionId,
-              message: `Timed out after ${args.timeoutMs}ms waiting for proxy sandbox submission.`,
-            }),
-          },
-        ],
-      };
-    },
-  );
-
-  // 7. export_dotlottie
+  // 6. export_dotlottie
   server.tool(
     'export_dotlottie',
     'Run the Filter-to-Raster export bridge (rasterizing SVG blur/glow/shadow layers at target DPI) and package production .json and .lottie files.',
@@ -573,7 +425,7 @@ export function createMotionStudioMcpServer(): McpServer {
     },
   );
 
-  // 8. distill_motion_curve (utility tool for direct curve distillation)
+  // 7. distill_motion_curve (utility tool for direct curve distillation)
   server.tool(
     'distill_motion_curve',
     'Run Ramer-Douglas-Peucker simplification + cubic-bezier fitting on raw pointer samples to emit 3–4 minimal Lottie keyframes.',
@@ -605,7 +457,7 @@ export function createMotionStudioMcpServer(): McpServer {
     },
   );
 
-  // 9. render_contact_sheet (instant visual verification of key frames before reporting done)
+  // 8. render_contact_sheet (instant visual verification of key frames before reporting done)
   server.tool(
     'render_contact_sheet',
     'Render smartly selected key frames (including 90° crossings & midpoints) of a Lottie composition into a single labelled PNG contact sheet for visual verification.',

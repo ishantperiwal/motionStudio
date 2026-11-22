@@ -8,15 +8,18 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "dev": "node server/dev.mjs",
+    "doctor": "node tools/doctor.mjs",
     "mcp": "node dist/mcp/index.js",
     "render": "node render/render.mjs",
     "probe": "node render/probe.mjs",
     "new-scene": "node tools/new-scene.mjs",
     "new-lottie": "node tools/new-lottie.mjs",
     "verify-lottie": "node tools/verify-lottie.mjs",
+    "verify-shapes": "node tools/verify-shapes.mjs",
     "ref": "node tools/ref.mjs",
     "done": "node tools/done.mjs",
-    "test:lottie": "npm run build && node --test tests/lottie-pipeline.test.mjs"
+    "test:lottie": "npm run build && node --test tests/lottie-pipeline.test.mjs",
+    "postinstall": "node tools/doctor.mjs --postinstall"
   },
   "dependencies": {
     "@dotlottie/dotlottie-js": "^1.10.0",
@@ -34,6 +37,7 @@
     "gsap": "^3.13.0",
     "lottie-web": "^5.12.2",
     "p5": "^1.11.3",
+    "paper": "^0.17.0",
     "pixi.js": "^8.6.6",
     "roughjs": "^4.6.6",
     "svgo": "^4.1.0",

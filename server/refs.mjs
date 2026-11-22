@@ -15,6 +15,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { ROOT, PROJECT } from './project.mjs';
+import { CHROME } from './chrome.mjs';
 
 export const REFS = path.join(PROJECT, 'references');
 export const PREFIX = 'ref.';   // a reference's scene id: ref.<id>
@@ -130,6 +131,23 @@ export async function addMoment(id, { range, frame, region, text, name }) {
   capture(ref, { dir, inS: Math.max(0, f0 / fps), outS: Math.min(duration, (f1 + 1) / fps), region: m.region })
     .then(() => write({ ...m, status: 'ready' }), (e) => write({ ...m, status: 'failed', error: e.message }));
   return { ...m, id: mid };
+}
+// measure a moment again, with its saved span and box (one that failed, say)
+export async function remeasureMoment(id, mid) {
+  const ref = await readRef(id);
+  if (!ref || ref.status !== 'ready') throw new Error('this reference isn\'t ready');
+  const dir = path.join(momentsDir(id), mid);
+  const { error: _error, ...m } = JSON.parse(await fsp.readFile(path.join(dir, 'moment.json'), 'utf8'));
+  const { fps, duration } = ref.video;
+  const write = (x) => fsp.writeFile(path.join(dir, 'moment.json'), JSON.stringify(x, null, 2) + '\n');
+  await write({ ...m, status: 'capturing' });
+  try {
+    await capture(ref, { dir, inS: Math.max(0, m.range[0] / fps), outS: Math.min(duration, (m.range[1] + 1) / fps), region: m.region });
+    await write({ ...m, status: 'ready' });
+  } catch (e) {
+    await write({ ...m, status: 'failed', error: e.message });
+    throw e;
+  }
 }
 export async function updateMoment(id, mid, change) {
   if (!/^[\w.-]+$/.test(mid)) return null;
@@ -513,7 +531,7 @@ async function sheets(dir, { n, fps, crop, region, vw, ctx, motion }) {
   const file = path.join(dir, '_sheet.html');
   await fsp.writeFile(file, html);
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(CHROME);
   try {
     const page = await browser.newPage({ viewport: { width: 3000, height: 1000 } });
     await page.goto(`file://${file}`);

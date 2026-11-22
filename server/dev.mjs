@@ -11,18 +11,9 @@ import { listRefs, listRefScenes, scenePage, addLink, addFile, deleteRef, safeRe
 import { listMedia, addMedia, deleteMedia } from './media.mjs';
 import { dropDoneNotes, scenesWithNotes } from './done.mjs';
 
-// The browser for capturing frames: Playwright's own Chromium (npx playwright install chromium), never the user's Google
-// Chrome app. A hidden instance of the real Chrome app takes its place on macOS: with the user's Chrome closed, clicking
-// Chrome just wakes the invisible one and no window opens. Chromium can't decode H.264, so videos in scenes are WebM.
-// Its default GPU memory limit is too small for heavy 3D scenes: past it, frames quietly skip drawing parts (layers come
-// out blank) even in screenshots. A higher limit keeps every frame complete.
-const FALLBACK_BROWSER = process.platform === 'win32'
-  ? ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].find((p) => fs.existsSync(p))
-  : undefined;
-export const CHROME = {
-  args: ['--force-gpu-mem-available-mb=8192', '--force-gpu-mem-discardable-limit-mb=4096'],
-  ...(FALLBACK_BROWSER ? { executablePath: FALLBACK_BROWSER } : {}),
-};
+import { CHROME } from './chrome.mjs';   // the capture browser and its settings (see chrome.mjs)
+import { startupWarning } from './doctor.mjs';
+export { CHROME };
 export { ROOT, PROJECT };   // the studio (tool) and the project (its scenes/, notes/, out/): see project.mjs
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -431,7 +422,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         return send(res, 200, note);
       }
 
-      // ---------- Lottie Studio APIs (health, baked preview, .lottie export, curve distillation, proxy sandbox) ----------
+      // ---------- Lottie Studio APIs (health, baked preview, .lottie export, curve distillation) ----------
       if (p === '/api/lottie/health' && req.method === 'GET') {
         const scene = safeId(url.searchParams.get('scene'));
         if (!scene || !isLottieScene(scene)) return send(res, 404, { error: 'not a Lottie composition' });
@@ -501,7 +492,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
           y: region ? Math.round(region.y + region.h / 2) : (body.y ?? null),
           boundingBox: region ? { x: region.x, y: region.y, width: region.w, height: region.h } : null,
           layers: (body.elements || []).map((e) => e.layerId || e.name),
-          distilledCurve: body.distilledCurve || null,
+          motion: body.motion || null,
           curve: body.curve || null,
           note: body.text || '',
         };
@@ -510,38 +501,6 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         await fsp.appendFile(inboxFile, JSON.stringify(payload) + '\n');
         // Note stays in the timeline as an orange processing lane until the agent finishes it (npm run done → green To-Check bar)
         return send(res, 200, { ok: true, payload });
-      }
-      // Ephemeral Proxy Sandbox bridge (MCP spawn_proxy_sandbox <-> Live Editor Modal)
-      const sandboxFile = path.join(PROJECT, 'notes', '_sandbox.json');
-      if (p === '/api/sandbox' && req.method === 'GET') {
-        const cur = await readJSON(sandboxFile, null);
-        return send(res, 200, cur || { status: 'idle' });
-      }
-      if (p === '/api/sandbox' && req.method === 'POST') {
-        const body = await readBody(req);
-        const session = { status: 'open', createdAt: new Date().toISOString(), ...body };
-        await writeJSON(sandboxFile, session);
-        broadcast({ type: 'sandbox', session });
-        return send(res, 200, session);
-      }
-      if (p === '/api/sandbox' && req.method === 'PATCH') {
-        const patch = await readBody(req);
-        const cur = (await readJSON(sandboxFile, {})) || {};
-        if (patch.samples?.length >= 2 && !patch.distilled) {
-          try {
-            const { distillMotionCurve } = await getCompiler();
-            patch.distilled = distillMotionCurve(patch.samples, { fps: cur.fps || patch.fps || 60, maxKeyframes: 4 });
-          } catch {}
-        }
-        const next = { ...cur, ...patch, updatedAt: new Date().toISOString() };
-        await writeJSON(sandboxFile, next);
-        broadcast({ type: 'sandbox', session: next });
-        return send(res, 200, next);
-      }
-      if (p === '/api/sandbox' && req.method === 'DELETE') {
-        await fsp.rm(sandboxFile, { force: true });
-        broadcast({ type: 'sandbox', session: { status: 'idle' } });
-        return send(res, 200, { ok: true });
       }
       if ((m = p.match(/^\/api\/notes\/([\w.-]+)\/([\w.-]+)$/)) && req.method === 'DELETE') {
         const note = await readJSON(path.join(PROJECT, 'notes', m[1], `${m[2]}.json`), null);
@@ -594,12 +553,6 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
         const f = String(rawF).replace(/\\/g, '/');
         if (/(^|\/)\.|~$/.test(f)) return;
         if (dir === 'references' && !/(^|\/)(ref|moment)\.json$/.test(f)) return;   // not every frame file being written
-        if (dir === 'notes' && f === '_sandbox.json') {
-          readJSON(path.join(PROJECT, 'notes', '_sandbox.json'), null).then((session) => {
-            if (session) broadcast({ type: 'sandbox', session });
-          });
-          return;
-        }
         // the To check list changed (an agent finished a note): a note already in it is done, so it goes (server/done.mjs)
         const m = dir === 'notes' && f.match(/^([^/]+)\/_checklist\.json$/);
         if (m) try { dropDoneNotes(m[1]); } catch {}
@@ -613,6 +566,7 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
 
   return new Promise((ok) => server.listen(port, () => {
     if (!quiet) console.log(`Motion Studio → http://localhost:${server.address().port}/editor/${PROJECT !== ROOT ? `   (project: ${PROJECT})` : ''}`);
+    if (!quiet) { const warn = startupWarning(); if (warn) console.log(warn); }   // anything missing, said up front
     ok(server);
   }));
 }

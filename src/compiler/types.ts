@@ -345,13 +345,33 @@ export interface KeyframeTrackParams {
   keyframes: LottieKeyframe<number[] | number>[];
 }
 
+// A pose of a morphing shape: one closed path, any vertex count (shapeMorph matches them exactly, as
+// lottie-ios / lottie-android only morph between matching paths); `colors` are the layer's gradient stops
+// [pos, r, g, b, ...] (0–1).
+export interface ShapeMorphStop {
+  t: number;
+  path: LottieBezierPath;
+  colors?: number[];
+  ease?: string | CubicBezierTuple;
+  hold?: boolean;
+}
+
+export interface ShapeMorphParams {
+  kind: 'shapeMorph';
+  layerId: string;
+  stops: ShapeMorphStop[];
+  /** vertices per pose after matching (default 96: enough that points spread evenly over every pose) */
+  points?: number;
+}
+
 export type MotionPrimitiveSpec =
   | SpringMoveParams
   | TrimStrokeParams
   | StaggeredEntranceParams
   | Faux3DFlipParams
   | SquashAndStretchParams
-  | KeyframeTrackParams;
+  | KeyframeTrackParams
+  | ShapeMorphParams;
 
 // ---------------------------------------------------------------------------
 // Curve Distillation

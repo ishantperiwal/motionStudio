@@ -7,7 +7,6 @@ out/
 notes/*/
 notes/_go.json
 notes/_go.*.json
-notes/_sandbox.json
 notes/_inbox.jsonl
 !notes/.gitkeep
 

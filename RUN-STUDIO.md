@@ -1,16 +1,22 @@
 # Run Motion Studio
 
-## First time (once per Mac)
-1. Install [Node.js](https://nodejs.org) 20 or newer, Google Chrome, ffmpeg and yt-dlp (`brew install ffmpeg yt-dlp`;
-   yt-dlp downloads videos for References from a link).
+## First time (once per computer)
+1. Install [Node.js](https://nodejs.org) 20 or newer.
 2. Get the project and its libraries:
    ```bash
    git clone https://github.com/ishantperiwal/motionStudio.git
    cd motionStudio
    npm install
-   npm run build
    ```
-   (`npm run build` compiles the Lottie tools; run it again after pulling changes to `src/`.)
+   `npm install` also builds the Lottie tools and downloads the browser renders use.
+3. Check everything else and install what's missing:
+   ```bash
+   npm run doctor -- --fix
+   ```
+   It checks Node, the libraries, the Lottie tools, the render browser, ffmpeg and yt-dlp (yt-dlp downloads videos for
+   References from a link). It installs ffmpeg and yt-dlp itself with winget (Windows) or Homebrew (Mac); on Linux it
+   prints the `apt` command to run. `npm run doctor` on its own just reports. The studio also says on start if
+   anything is missing.
 
 ## Keep your films outside the studio (recommended)
 Your scenes, notes and exports can live in their own folder next to the studio, so the studio stays just the tool
@@ -113,7 +119,11 @@ in place of Export MP4.
    ```bash
    npm run verify-lottie -- my-badge
    ```
-   It's saved as `out/my-badge-sheet.png`.
+   It's saved as `out/my-badge-sheet.png`. For a close look at the shapes' edges (2×, cropped to the shapes):
+   ```bash
+   npm run verify-shapes -- my-badge
+   ```
+   It's saved as `out/my-badge-shapes.png`; add frames to pick them (`npm run verify-shapes -- my-badge 40,80`).
 3. Press **⤓ Export .lottie**: `out/` gets `my-badge.json` and `my-badge.lottie`, ready for the app's Lottie player.
 
 **Optional: Lottie tools for Claude (MCP).** The same pipeline is available to Claude as tools. Register it once, from
@@ -129,4 +139,4 @@ claude mcp add motion-studio-lottie -- node dist/mcp/index.js
 - **"Port in use":** another copy is already running — use that one, or close it and start again.
 - **Send to Claude does nothing:** the watcher isn't running. Ask Claude to start the notes watcher; your
   waiting notes get picked up as soon as it does.
-- **Export fails:** check that Chrome and ffmpeg are installed (`ffmpeg -version`).
+- **Export or a render fails, or a reference moment won't measure:** run `npm run doctor` and fix what it lists (`npm run doctor -- --fix`).

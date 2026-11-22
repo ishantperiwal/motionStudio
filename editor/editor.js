@@ -1,6 +1,5 @@
 // Motion Studio editor: scrub a scene and leave notes pinned to a frame or a span.
 // The timeline lists the notes; the right panel shows only the note you're on.
-import { openProxySandbox } from './sandbox.js';
 
 const $ = (q, r = document) => r.querySelector(q);
 function h(tag, attrs = {}, ...kids) {
@@ -79,10 +78,6 @@ async function init() {
   const es = new EventSource('/api/events');
   es.onmessage = (e) => {
     const msg = JSON.parse(e.data);
-    if (msg.type === 'sandbox') {
-      if (msg.session?.status === 'open') launchSandboxModal(msg.session);
-      return;
-    }
     const { paths = [] } = msg;
     if (paths.some((p) => p.startsWith('editor/'))) return location.reload();
     if (!st.scene && paths.some((p) => p.startsWith('scenes/'))) return location.reload();   // first scene created
@@ -90,7 +85,6 @@ async function init() {
     if (paths.some((p) => p.startsWith(`notes/${st.scene}/`))) loadNotes();
     if (st.scene?.startsWith('ref.') && paths.some((p) => p.startsWith(`references/${st.scene.slice(4)}/`))) loadNotes();   // a finding written
   };
-  fetch('/api/sandbox').then((r) => r.json()).then((s) => { if (s?.status === 'open') launchSandboxModal(s); }).catch(() => {});
 }
 
 // The picker lists films and animatics only. References open in the References panel, in their own editor (?embed).
@@ -768,7 +762,7 @@ async function loadNotes() {
   if (st.selF && !findings.find((f) => f.id === st.selF)) st.selF = null;
   // keep the open note's object (it may hold typing that hasn't round-tripped yet)
   const open = st.notes.find((x) => x.id && x.id === st.sel);
-  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, region: open.region, elements: open.elements, beats: open.beats, useRefs: open.useRefs, media: open.media }) : f));   // the open note's local edits (text, box) win
+  st.notes = fresh.map((f) => (open && f.id === open.id ? Object.assign(open, { ...f, text: open.text, curve: open.curve ?? null, motion: open.motion ?? null, region: open.region, elements: open.elements, beats: open.beats, useRefs: open.useRefs, media: open.media }) : f));   // the open note's local edits (text, box) win
   // the open note was resolved elsewhere (e.g. by Claude): drop it and the time range it had selected,
   // so a spot note drawn next doesn't inherit that range and turn into a span note
   if (st.sel && !st.notes.find((n) => n.id === st.sel)) { st.sel = null; setRange(null); }
@@ -786,7 +780,7 @@ function startNote({ region = null }) {
   const hits = region ? st.S.hitTest(region, range || [fi, fi])
     : { beats: range ? st.beats.filter((b) => b.f1 >= range[0] && b.f0 <= range[1] && b.f1 > b.f0).map((b) => ({ name: b.name, f0: b.f0, f1: b.f1 })) : [], elements: [] };
   let elements = hits.elements.slice(0, 6).map(({ name, layerId, text, rect, keyframes }) => ({ name, ...(layerId ? { layerId } : {}), text, rect, ...(keyframes ? { keyframes } : {}) }));
-  st.pending = { text: '', frame: fi, range, region, beats: hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 })), elements, curve: null, distilledCurve: null };
+  st.pending = { text: '', frame: fi, range, region, beats: hits.beats.map(({ name, f0, f1 }) => ({ name, f0, f1 })), elements, curve: null, motion: null };
   st.sel = null; st.selF = null; st.curveOpen = false; st.editing = true; st.focusText = true;
   setComment(false);
   buildTimeline(); renderPanel(); drawOverlay();
@@ -857,7 +851,7 @@ function persist(n) {
       if (!st.notes.includes(n)) st.notes.push(n);
       buildTimeline();
     } else {
-      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, distilledCurve: n.distilledCurve ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [], media: n.media || [] }));
+      await fetch(`/api/notes/${st.scene}/${n.id}`, json('PATCH', { text: n.text, curve: n.curve ?? null, motion: n.motion ?? null, range: n.range, frame: n.frame, elements: n.elements, beats: n.beats, region: n.region, useRefs: n.useRefs || [], media: n.media || [] }));
       const lane = [...lanes.children].find((l) => !l._done && (l._note === n || l._note?.id === n.id));
       if (lane) lane.querySelector('.name').lastChild.textContent = n.text;
     }
@@ -911,6 +905,7 @@ function noteContext(n) {
     `Note: ${n.text}`,
     n.followUp ? `Follow-up on Claude's change: ${n.followUp}` : null,
     n.curve ? `Wanted easing: cubic-bezier(${n.curve.join(', ')})` : null,
+    n.motion ? `Wanted movement: ${motionSummary(n)} (${JSON.stringify(n.motion.steps)})` : null,
     n.useRefs?.length ? `Reference moments: ${n.useRefs.map((u) => `references/${u.ref}/moments/${u.id}/ (${u.name})`).join(', ')}` : null,
     n.media?.length ? `Attached: ${n.media.map((m) => `${m.label} = ${m.path}`).join(', ')}` : null,
     n.region ? `Region (stage px): x ${n.region.x}, y ${n.region.y}, ${n.region.w}×${n.region.h}` : null,
@@ -931,6 +926,123 @@ function miniCurve(c) {
   const svg = svgEl('svg', { class: 'mini', viewBox: '-4 -14 48 48' });
   svg.append(svgEl('path', { d: `M0,30 C${c[0] * 40},${30 - c[1] * 30} ${c[2] * 40},${30 - c[3] * 30} 40,0` }));
   return svg;
+}
+
+// The movement on a note (optional, under its easing): a square stands in for the element. Each step is where it
+// ends up, measured from where it starts: { x, y } in stage px, scale %, rotate °. Steps play one after another,
+// each with the note's easing.
+const moveSubject = (n) => n.elements?.[0]?.name || 'the element';
+const STILL = { x: 0, y: 0, scale: 100, rotate: 0 };
+function motionSummary(n) {
+  const steps = n.motion?.steps;
+  if (!steps?.length) return '';
+  const end = steps[steps.length - 1];
+  const ease = Object.entries(st.S?.tokens?.ease || {}).find(([, p]) => n.curve && p.join() === n.curve.join())?.[0];
+  return [
+    ease || 'custom ease',
+    end.x ? `${Math.abs(end.x)}px ${end.x > 0 ? 'right' : 'left'}` : null,
+    end.y ? `${Math.abs(end.y)}px ${end.y > 0 ? 'down' : 'up'}` : null,
+    end.scale !== 100 ? `scale ${end.scale}%` : null,
+    end.rotate ? `rotate ${end.rotate}°` : null,
+    steps.length > 1 ? `${steps.length} steps` : null,
+  ].filter(Boolean).join(' · ');
+}
+
+// y of a cubic-bezier ease at progress x (Newton on x, then bisection)
+function easeAt(c, x) {
+  const bz = (a, b, t) => 3 * a * (1 - t) ** 2 * t + 3 * b * (1 - t) * t * t + t ** 3;
+  let t = x;
+  for (let i = 0; i < 8; i++) {
+    const dx = bz(c[0], c[2], t) - x;
+    const d = 3 * c[0] * (1 - t) ** 2 + 6 * (c[2] - c[0]) * (1 - t) * t + 3 * (1 - c[2]) * t * t;
+    if (Math.abs(dx) < 1e-5 || Math.abs(d) < 1e-6) break;
+    t = clamp(t - dx / d, 0, 1);
+  }
+  return bz(c[1], c[3], t);
+}
+
+function movementEditor(n, commit) {
+  const wrap = h('div', { class: 'mv' });
+  if (!n.motion) {
+    wrap.append(h('button', { class: 'cue add', title: 'Show how far it moves, scales or turns, not just its timing',
+      onclick: () => { st.mvStep = 0; commit({ subject: moveSubject(n), steps: [{ ...STILL, x: Math.round(st.w / 6) }] }); } }, '+ Show the movement'));
+    return wrap;
+  }
+  const subject = n.motion.subject || moveSubject(n);
+  const steps = n.motion.steps.map((s) => ({ ...STILL, ...s }));
+  const sel = clamp(st.mvStep ?? steps.length - 1, 0, steps.length - 1);
+  const span = n.range ? `f${n.range[0]}–${n.range[1]}` : `f${n.frame}`;
+  const keep = () => commit({ subject, steps });
+  wrap.append(h('div', { class: 'mv-ask' }, ...(subject === moveSubject({})
+    ? [`The square stands in for what this note is about (${span}). Drag it the way you want that to move in the animation.`]
+    : ['The square is ', h('b', {}, subject), ` (${span}). Drag it the way you want ${subject} to move in the animation.`]),
+    ' It plays with the easing above.'));
+
+  // the stage, scaled down; the square starts in the middle
+  const W = 300, H = clamp(Math.round((W * st.h) / st.w), 120, 190), k = W / st.w, S = 26;
+  const svg = svgEl('svg', { class: 'mv-stage', viewBox: `0 0 ${W} ${H}` });
+  const cx = W / 2, cy = H / 2;
+  const ghost = svgEl('rect', { class: 'mv-ghost', x: cx - S / 2, y: cy - S / 2, width: S, height: S, rx: 6 });
+  const trail = svgEl('polyline', { class: 'mv-trail' });
+  const dots = steps.map(() => svgEl('circle', { class: 'mv-dot', r: 3.5 }));
+  const sq = svgEl('g', { class: 'mv-sq' });
+  sq.append(svgEl('rect', { x: -S / 2, y: -S / 2, width: S, height: S, rx: 6 }));
+  svg.append(ghost, trail, ...dots, sq);
+  const place = (s) => sq.setAttribute('transform', `translate(${cx + s.x * k} ${cy + s.y * k}) rotate(${s.rotate}) scale(${s.scale / 100})`);
+  const drawPath = () => {
+    trail.setAttribute('points', [STILL, ...steps].map((s) => `${cx + s.x * k},${cy + s.y * k}`).join(' '));
+    dots.forEach((d, i) => { d.setAttribute('cx', cx + steps[i].x * k); d.setAttribute('cy', cy + steps[i].y * k); d.classList.toggle('on', i === sel); });
+  };
+
+  // plays the steps in a loop (each 0.8s, then a short rest); stops while you drag or slide
+  let held = false;
+  const STEP = 800, REST = 500, t0 = performance.now();
+  const lerp = (a, b, e) => ({ x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, scale: a.scale + (b.scale - a.scale) * e, rotate: a.rotate + (b.rotate - a.rotate) * e });
+  const tick = (now) => {
+    if (!wrap.isConnected) return;
+    if (!held) {
+      const t = (now - t0) % (steps.length * STEP + REST);
+      const i = Math.min(steps.length - 1, Math.floor(t / STEP));
+      const e = t >= steps.length * STEP ? 1 : easeAt(n.curve, (t - i * STEP) / STEP);
+      place(lerp(i ? steps[i - 1] : STILL, steps[i], e));
+    }
+    requestAnimationFrame(tick);
+  };
+  const hold = () => { held = true; place(steps[sel]); drawPath(); };
+  sq.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    capture(sq, e.pointerId); hold();
+    const r = svg.getBoundingClientRect(), ux = W / r.width;
+    const off = { x: (e.clientX - r.left) * ux - (cx + steps[sel].x * k), y: (e.clientY - r.top) * ux - (cy + steps[sel].y * k) };
+    onDrag(sq, e, (ev) => {
+      let x = ((ev.clientX - r.left) * ux - off.x - cx) / k, y = ((ev.clientY - r.top) * ux - off.y - cy) / k;
+      if (ev.shiftKey) (Math.abs(x) > Math.abs(y) ? (y = 0) : (x = 0));   // ⇧ keeps it straight across or up/down
+      steps[sel].x = Math.round(clamp(x, -st.w, st.w)); steps[sel].y = Math.round(clamp(y, -st.h, st.h));
+      hold();
+    }, () => keep());
+  });
+  drawPath(); place(steps[sel]);
+  requestAnimationFrame(tick);
+  wrap.append(svg);
+
+  // scale and turn for the selected step
+  const slider = (label, key, min, max, unit) => {
+    const out = h('span', { class: 'mv-val' }, `${steps[sel][key]}${unit}`);
+    return h('label', { class: 'mv-slider' }, h('span', {}, label),
+      h('input', { type: 'range', min, max, step: 5, value: steps[sel][key],
+        oninput: (e) => { steps[sel][key] = +e.target.value; out.textContent = `${steps[sel][key]}${unit}`; hold(); },
+        onchange: () => keep() }),
+      out);
+  };
+  wrap.append(h('div', { class: 'mv-sliders' }, slider('Scale', 'scale', 25, 200, '%'), slider('Turn', 'rotate', -180, 180, '°')));
+
+  // steps: a move can have several (pull back, then jump; a bounce)
+  wrap.append(h('div', { class: 'pills mv-steps' },
+    steps.length > 1 ? steps.map((_, i) => h('button', { class: i === sel ? 'on' : '', title: `Edit step ${i + 1}`, onclick: () => { st.mvStep = i; commit({ subject, steps }); } }, `Step ${i + 1}`)) : null,
+    h('button', { title: 'Add another step after the last one', onclick: () => { steps.push({ ...steps[steps.length - 1] }); st.mvStep = steps.length - 1; keep(); } }, '+ step'),
+    steps.length > 1 ? h('button', { class: 'ghost', onclick: () => { steps.splice(sel, 1); st.mvStep = Math.max(0, sel - 1); keep(); } }, `remove step ${sel + 1}`) : null,
+    h('button', { class: 'ghost', onclick: () => commit(null) }, 'remove movement')));
+  return wrap;
 }
 
 // Media: files attached to a note, as A1, A2… (the note's text can talk about "A1"). Drop or paste a file onto the open
@@ -957,8 +1069,15 @@ async function attachFiles(n, files) {
 }
 const openNote = () => st.pending || st.notes.find((x) => x.id === st.sel);
 const upIcon = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10.5V2.5M4.75 5.75 8 2.5l3.25 3.25M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// SVG copied as markup (Figma, Affinity, an editor) arrives as text: paste it as an .svg file
+const svgPaste = (cd) => {
+  const t = (cd?.getData('image/svg+xml') || cd?.getData('text/plain') || '').trim();
+  if (!/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>][\s\S]*<\/svg>$/i.test(t)) return null;
+  return new File([t], 'pasted.svg', { type: 'image/svg+xml' });
+};
 addEventListener('paste', (e) => {
   const n = openNote(), files = [...(e.clipboardData?.files || [])];
+  if (!files.length) { const svg = svgPaste(e.clipboardData); if (svg) files.push(svg); }
   if (!n || !files.length) return;            // plain text pastes behave as usual
   e.preventDefault(); attachFiles(n, files);
 });
@@ -1062,7 +1181,7 @@ function renderPanel() {
     const chips = [
       ...(n.media || []).map((m) => h('a', { class: 'att-chip', href: m.url, target: '_blank', title: `${m.label} · ${m.name}` }, mediaThumb(m), h('b', {}, m.label), h('span', {}, m.name))),
       ...(n.useRefs || []).map((u) => h('span', { class: 'att-chip ref', onclick: (e) => { e.stopPropagation(); openRefMoment(u, n); } }, h('span', { class: 'fmark' }, '◆'), h('span', {}, u.name))),
-      n.distilledCurve ? h('span', { class: 'att-chip' }, `✦ ${n.distilledCurve.keyframeCount} kf distilled`) : null,
+      n.curve ? h('span', { class: 'att-chip' }, miniCurve(n.curve), h('span', {}, motionSummary(n) || `cubic-bezier(${n.curve.join(', ')})`)) : null,
     ].filter(Boolean);
     if (chips.length) card.append(h('div', { class: 'att-row' }, chips));
     panel.append(card);
@@ -1120,25 +1239,9 @@ function renderPanel() {
   // what can be added to the note, together in one row (hidden once it's with Claude)
   if (!sent) panel.append(h('div', { class: 'cues' },
     n.curve
-      ? h('button', { class: `cue ${st.curveOpen ? 'on' : ''}`, title: 'Easing you want — click to edit', onclick: () => { st.curveOpen = !st.curveOpen; renderPanel(); } },
-          miniCurve(n.curve), `cubic-bezier(${n.curve.join(', ')})`)
-      : h('button', { class: 'cue add', onclick: () => setCurve([...(st.S.tokens?.ease?.move || [0.45, 0, 0.2, 1])]) }, '+ easing'),
-    !isRef
-      ? h('button', {
-          class: `cue ${n.distilledCurve ? 'on' : 'add'}`,
-          title: 'Demonstrate motion feel on a single proxy shape and distill into 3–4 clean Lottie keyframes',
-          onclick: () => launchSandboxModal({
-            sceneId: st.scene,
-            layerId: n.elements?.[0]?.layerId || n.elements?.[0]?.name || null,
-            property: 'position',
-            fps: st.fps,
-            prompt: 'Sculpt the motion feel you want for this note — drag the block (hold Shift to lock H/V), box-select keyframes, or double-click the curve to add & drag keyframes.',
-          }, (res) => {
-            save(n, { distilledCurve: res.distilled, curve: res.distilled.primaryBezier });
-            rerender();
-          }),
-        }, n.distilledCurve ? `✦ ${n.distilledCurve.summary || `${n.distilledCurve.keyframeCount} kf feel`}` : '+ motion feel')
-      : null,
+      ? h('button', { class: `cue ${st.curveOpen ? 'on' : ''}`, title: 'The motion you want — click to edit', onclick: () => { st.curveOpen = !st.curveOpen; renderPanel(); } },
+          miniCurve(n.curve), motionSummary(n) || `cubic-bezier(${n.curve.join(', ')})`)
+      : h('button', { class: 'cue add', title: 'Show the easing you want (and, optionally, the movement)', onclick: () => setCurve([...(st.S.tokens?.ease?.move || [0.45, 0, 0.2, 1])]) }, '+ motion'),
     n.range
       ? (n.region
           ? h('button', { class: 'cue', title: 'Remove the marked area', onclick: () => removeArea(n) }, '✕ area')
@@ -1168,7 +1271,8 @@ function renderPanel() {
     panel.append(h('div', { class: 'curve' },
       bezierEditor(n.curve, () => {}, (c) => setCurve(c)),
       h('div', { class: 'pills' }, ...tokens.map(([name, pts]) => h('button', { class: pts.join() === n.curve.join() ? 'on' : '', onclick: () => setCurve([...pts]) }, name)),
-        h('button', { class: 'ghost', onclick: () => setCurve(null) }, 'remove'))));
+        h('button', { class: 'ghost', onclick: () => { save(n, { motion: null }); setCurve(null); } }, 'remove')),
+      sent ? null : movementEditor(n, (motion) => { save(n, { motion }); rerender(); })));
   }
   if (n.reply) panel.append(h('div', { class: 'reply' }, h('b', {}, agentName(n.sentTo)), n.reply));
 }
@@ -1483,7 +1587,7 @@ async function sendNote(n) {
       region: n.region,
       elements: n.elements || [],
       curve: n.curve || null,
-      distilledCurve: n.distilledCurve || null,
+      motion: n.motion || null,
       text: n.text,
     })).catch(() => {});
   }
@@ -1601,7 +1705,7 @@ function onGlobalKeyDown(e) {
 }
 addEventListener('keydown', onGlobalKeyDown);
 
-// ------------------------------------------------------------------ Lottie Studio chrome & Proxy Sandbox
+// ------------------------------------------------------------------ Lottie Studio chrome
 function syncLottieChrome() {
   const on = !!st.isLottie;
   $('#exportGroup').hidden = on;
@@ -1639,33 +1743,6 @@ async function loadLottieHealth() {
   } catch {
     pill.hidden = true;
   }
-}
-
-function launchSandboxModal(session, onCustomSubmit) {
-  setPlaying(false);
-  openProxySandbox({
-    session,
-    onSubmit: (res) => {
-      if (onCustomSubmit) {
-        onCustomSubmit(res);
-      } else {
-        let open = openNote();
-        if (!open && !session?.id) {
-          startNote({});
-          open = st.pending;
-        }
-        if (open) {
-          save(open, { distilledCurve: res.distilled, curve: res.distilled.primaryBezier });
-          renderPanel();
-        }
-      }
-    },
-    onCancel: () => {
-      if (session?.id) {
-        fetch('/api/sandbox', json('PATCH', { status: 'cancelled' })).catch(() => {});
-      }
-    },
-  });
 }
 
 const BACKDROPS = ['checker', 'dark', 'light'];

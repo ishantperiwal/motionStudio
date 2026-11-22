@@ -86,7 +86,11 @@ mean the project's. Check which project a running studio uses in its startup lin
    (stage px), `elements` (data-names / text in the box, best match first — a tight box puts the element
    they mean at the top), `beats` (names in `scene.js`) and
    optionally `curve` — a cubic-bezier the person picked to show the easing they want; apply it
-   exactly unless the text says otherwise. Optionally also:
+   exactly unless the text says otherwise — and with it, optionally, `motion`: the movement they showed with a
+   square standing in for `motion.subject` (the note's element). `motion.steps` are where it ends up after each step,
+   measured from where it starts: `x`/`y` in stage px (+x right, +y down), `scale` %, `rotate` °; the steps play one
+   after another, each with `curve`, across the note's frames. Match the distances, scale and turn, and the number
+   of steps (a pull-back, a bounce). Optionally also:
    - `media`: files attached as `A1`, `A2`… (`[{ label, name, kind, path, from }]`; `path` is relative to the
      project). The text says what each is for, e.g. "use A1 as the base footage" or "make it look like A2". Open
      images to look at them; for a video, grab a few frames (`ffmpeg -ss <t> -i <path> -frames:v 1 …`). **To use
@@ -170,7 +174,7 @@ A scene whose folder has a `comp.json` is a Lottie composition, made to ship to 
 - **Files** (`scenes/<id>/`): `comp.json` is the source: size, fps, `durationFrames`, `tokens`, `assets` (SVGs in
   `assets/`, each top-level `<g id>` becomes a named layer), `primitives` (motion moves: `position`, `scale`,
   `rotation`, `opacity`, `springMove`, `trimStroke`, `staggeredEntrance`, `faux3DFlip`, `squashAndStretch`,
-  `keyframeTrack`) and `patches` (per-layer edits applied last). `animation.json` (the Lottie) and `filters.json`
+  `keyframeTrack`, `shapeMorph`) and `patches` (per-layer edits applied last). `animation.json` (the Lottie) and `filters.json`
   are compiled from it: never edit them by hand. `index.html` is the player page (`runtime/lottie-stage.js`).
 - **The compiler** is TypeScript in `src/compiler/`; every tool loads it from `dist/`, so run `npm run build` after
   changing `src/` (and once after cloning). The dev server says "Lottie compiler not built" when `dist/` is missing.
@@ -178,17 +182,20 @@ A scene whose folder has a `comp.json` is a Lottie composition, made to ship to 
   to `comp.json` are lost on its next run): change it and run `node tools/build-<id>.mjs`. Otherwise edit
   `comp.json`'s `primitives` / `patches` and recompile; `npm run verify-lottie -- <id>` recompiles `animation.json`
   as it checks. Times are frames at the composition's own `fps` (often 60, not the studio's 25).
+- **Shapes are constructed, never sampled:** build geometric shapes with the geometry kit (lines, true arcs,
+  booleans, filleted corners; `geometry` in `dist/compiler/index.js`), never as a formula sampled into points. See
+  lottie-craft §3. `shapeMorph` morphs between any such shapes, matching their points exactly.
 - **New one:** `npm run new-lottie -- <id> [--size 512x512] [--fps 60] [--frames 90]` (scaffolds a flipping coin to
   start from).
 - **Notes on a Lottie scene** have no crop `<id>.png`: read `region` and `elements` (Lottie layer names under the box,
   from the live SVG) instead, and render the note's frame with `npm run verify-lottie -- <id> --frames <f>` to see it.
-  Each send also appends a line to `notes/_inbox.jsonl` (same note as `layers`, `boundingBox`, `distilledCurve`); the
-  note JSON stays the one to work and finish. `distilledCurve` is a curve fitted from a motion the person
-  demonstrated in the Proxy Sandbox: apply it like `curve`.
+  Each send also appends a line to `notes/_inbox.jsonl` (same note as `layers`, `boundingBox`, `motion`); the note
+  JSON stays the one to work and finish.
 - **Verify** with `npm run verify-lottie -- <id>` and look at `out/<id>-sheet.png` (8 key frames, crossings
-  included); with SVG filters, also `--baked`. `npm run test:lottie` runs the pipeline tests. Then `npm run done` as usual.
+  included); with SVG filters, also `--baked`. Shapes you built or changed: also `npm run verify-shapes -- <id>
+  [a,b,c]` and look at `out/<id>-shapes.png` (2× close-ups; the sheet's tiles are too small to show wobbles or kinks). `npm run test:lottie` runs the pipeline tests. Then `npm run done` as usual.
 - **MCP:** `npm run mcp` serves the same pipeline as tools (`create_composition`, `import_svg_asset`,
-  `apply_motion_primitive`, `patch_layer_ast`, `inspect_annotation`, `distill_motion_curve`, `spawn_proxy_sandbox`,
+  `apply_motion_primitive`, `patch_layer_ast`, `inspect_annotation`, `distill_motion_curve`,
   `render_contact_sheet`, `export_dotlottie`). Use them when connected; the npm commands above do the same without.
 - **Export:** the editor's **⤓ Export .lottie** writes `out/<id>.json` and `out/<id>.lottie` (filters baked to images).
 
@@ -204,6 +211,8 @@ behind it → `liquid-glass`), and use its kit rather than rebuilding the move. 
 `techniques/REGISTERING.md`.
 
 ## Rendering
+When a render, export, contact sheet or reference moment fails on something missing (a browser, ffmpeg, the build),
+run `npm run doctor` first: it lists what this machine lacks and `npm run doctor -- --fix` installs it.
 `npm run render -- <scene>` → `out/<scene>.mp4` (the project's `out/`). Options: `--range a-b`, `--blur 8` (sub-frame motion
 blur), `--shutter 0.5`, `--scale 2` (supersampled), `--workers N`, `--crf 16`. `--out file.webm` encodes WebM (VP9, ~25% smaller;
 `--vp9crf 30`); the editor's Export has an MP4 / WebM picker. A folder path in place of the scene id
