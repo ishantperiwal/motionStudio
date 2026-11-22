@@ -19,7 +19,7 @@ const tr = (stops) => ({
 });
 const sc = (v) => [v, v, 100];
 
-const { CompositionManager, geometry: g } = await import(pathToFileURL(path.join(ROOT, 'dist', 'compiler', 'index.js')).href);
+const { CompositionManager, geometry: g, fitBezierTrack } = await import(pathToFileURL(path.join(ROOT, 'dist', 'compiler', 'index.js')).href);
 const mgr = new CompositionManager(PROJECT, ROOT);
 
 const id = 'untitled';
@@ -35,14 +35,22 @@ const morphHold = 30;
 const morphDur = 27;
 const morphEnd = coinEnd + morphIn + 6 * (morphHold + morphDur) + 10; // the last pose (star) has landed
 
-// Glass tiles after the morph (references/in-11220804): the star shrinks away, six tiles burst into a ring over a
-// blue glow, the view pushes through the ring, a field of tiles drifts out at different depths (one whips past),
-// then the field pulls away and one tile settles in the centre with a glow pulse.
-const tilesIn = morphEnd + 4;        // ring bursts out while the star shrinks
-const pushAt = tilesIn + 64;         // view pushes through the ring
-const fieldIn = pushAt + 20;         // field emerges behind the ring
-const gatherAt = fieldIn + 112;      // field pulls away, hero settles
-const durationFrames = gatherAt + 120;
+// Glass tiles after the morph (references/in-11220804, moment "This particular section is special"): the star shrinks
+// away and six tiles burst out into a 3D ring over a blue glow while orbiting clockwise; the ring stays alive in a
+// smooth clockwise drift, then executes a full 360° 3D Y-axis double-sweep (two 180° front/back edge-on crossings:
+// right tiles swing forward toward the camera and grow huge while left tiles recede and shrink behind; the camera pulls
+// back into a compact centered ring at 180° and pushes back forward through the second crossing to 360°), glides out
+// into a gentle clockwise drift, then spirals inward as the hero tile emerges with a glow pulse. Every tile stays flat
+// facing the screen (billboarded) and scales purely by 3D perspective depth.
+const tilesIn = morphEnd + 4;        // 496: ring bursts out & expands while orbiting clockwise
+const driftStart = tilesIn + 38;     // 534: wide perimeter ring settles into living clockwise orbit
+const spinStart = driftStart + 36;   // 570: 3D ring double-sweep begins (phi = 0°)
+const spinDur = 82;                  // full 360° 3D revolution = two 180° sweeps
+const spinMid = spinStart + spinDur / 2; // 611: 180° compact centered ring (Phase 1 → Phase 2 Z-order handoff)
+const spinEnd = spinStart + spinDur; // 652: 360° landed wide ring
+const gatherAt = spinEnd + 34;       // 686: post-sweep drift ends, tiles spiral inward & hero emerges
+const gatherEnd = gatherAt + 40;     // 726: ring tiles gone
+const durationFrames = gatherAt + 120; // 806: hero settles & holds with glow pulse
 
 const cx = 256;
 const cy = 256;
@@ -166,18 +174,88 @@ const tileDefs = `
     <filter id="tileGlowBlur" x="-80%" y="-80%" width="260%" height="260%">
       <feGaussianBlur stdDeviation="34" />
     </filter>`;
-// ring: six tiles, one per morph shape; field: eight tiles at different depths ([angle°, out radius, depth, turn°])
-const ringR = 118;
-const field = [
-  [-100, 0, 1.25, -18],   // the hero: ends in the centre
-  [-150, 200, 1.1, -10],
-  [-40, 190, 1.15, 9],
-  [15, 210, 0.95, -7],
-  [75, 175, 1.2, 12],
-  [130, 200, 1.0, -12],
-  [175, 215, 0.85, 6],
-  [40, 0, 1.0, 14],       // whips past the camera
-];
+// the ring: six tiles, one per morph shape, projected from a true 3D billboard ring (elements stay flat facing screen)
+const R_wide = 180;                  // 3D ring radius at wide perimeter (fills 512x512 without clipping)
+const S_wide = 140;                  // tile base scale % at Z = 0
+const focalLen = 440;                // perspective focal length (gives ~2.1x front/back scale contrast at crossings)
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const smoothstep = (v) => v * v * (3 - 2 * v);
+const easeOutCubic = (v) => 1 - (1 - v) ** 3;
+const easeInOutCubic = (v) => (v < 0.5 ? 4 * v ** 3 : 1 - (-2 * v + 2) ** 3 / 2);
+
+const vDrift = 0.78;                 // living clockwise orbital drift (deg/frame) — the ring never parks
+const spinExtraAlpha = 120 - spinDur * vDrift;
+const ringAlpha = (t) => {
+  if (t < driftStart) {
+    const b = clamp01((t - tilesIn) / (driftStart - tilesIn));
+    return vDrift * (t - driftStart) - 48 * (1 - b) ** 3;
+  }
+  if (t <= spinStart) return vDrift * (t - driftStart);
+  if (t <= spinEnd) {
+    const u = (t - spinStart) / spinDur;
+    return vDrift * (t - driftStart) + spinExtraAlpha * (u - Math.sin(2 * Math.PI * u) / (2 * Math.PI));
+  }
+  if (t <= gatherAt) return vDrift * (t - driftStart) + spinExtraAlpha;
+  const g = clamp01((t - gatherAt) / (gatherEnd - gatherAt));
+  return vDrift * (t - driftStart) + spinExtraAlpha + 36 * g * g;
+};
+// Crossing #1 occurs where smoothstep(u) = 0.25 (u ≈ 0.32635), Crossing #2 where smoothstep(u) = 0.75 (u ≈ 0.67365)
+const tCross1 = spinStart + spinDur * 0.32635;
+const tCross2 = spinStart + spinDur * 0.67365;
+const thetaOffset = -ringAlpha(tCross1); // aligns tile 0 at 0° (dead front) at Crossing #1
+
+const ringPose = (k, t) => {
+  let R = R_wide;
+  let S = S_wide;
+  let fade = 1;
+  if (t < driftStart) {
+    const b = clamp01((t - tilesIn) / (driftStart - tilesIn));
+    R = R_wide * easeOutCubic(b);
+    S = S_wide * easeOutCubic(b);
+  } else if (t > gatherAt) {
+    const g = clamp01((t - gatherAt) / (gatherEnd - gatherAt));
+    const ge = easeInOutCubic(g);
+    R = R_wide * (1 - 0.84 * ge);
+    S = S_wide * (1 - 0.85 * ge);
+    fade = 1 - smoothstep(clamp01((g - 0.15) / 0.85));
+  }
+  const theta = ((k * 60 + thetaOffset + ringAlpha(t)) * Math.PI) / 180;
+  const u0 = R * Math.cos(theta);
+  const v0 = R * Math.sin(theta);
+
+  let phi = 0;
+  let zc = 0;
+  let psi = 0;
+  if (t > spinStart && t < spinEnd) {
+    const u = (t - spinStart) / spinDur;
+    const p = smoothstep(u);
+    const q = p - (0.42 / (4 * Math.PI)) * Math.sin(4 * Math.PI * p);
+    phi = 2 * Math.PI * q;                           // 0 → 2π (full 360° = two 180° front/back sweeps)
+    zc = 250 * Math.sin(Math.PI * p) ** 4;           // pulls back into compact centered ring at 180°, pushes back in by 360°
+    psi = ((8.5 * Math.PI) / 180) * Math.sin(Math.PI * p); // subtle camera elevation separates front & back tiles vertically
+  }
+
+  // Rotate ring about vertical Y-axis (+X right side swings toward camera -Z, across to -X, then behind +Z)
+  const x1 = u0 * Math.cos(phi);
+  const y1 = v0;
+  const z1 = -u0 * Math.sin(phi);
+  // Subtle X-axis camera elevation tilt
+  const x2 = x1;
+  const y2 = y1 * Math.cos(psi) - z1 * Math.sin(psi);
+  const z2 = y1 * Math.sin(psi) + z1 * Math.cos(psi);
+
+  const persp = focalLen / (focalLen + zc + z2);
+  const x = cx + x2 * persp;
+  const y = cy + y2 * persp;
+  const scale = S * persp;
+  const depthDim = 1 - 0.42 * clamp01(z2 / R_wide);
+  const opacity = 100 * fade * depthDim;
+  return { x, y, scale, opacity, z: z2 };
+};
+
+// Back-to-front painter's order for Phase 1 (Crossing #1) and Phase 2 (Crossing #2)
+const p1Order = [0, 1, 2, 3, 4, 5].sort((a, b) => ringPose(b, tCross1).z - ringPose(a, tCross1).z);
+const p2Order = [0, 1, 2, 3, 4, 5].sort((a, b) => ringPose(b, tCross2).z - ringPose(a, tCross2).z);
 
 // Cosine-spaced 3D cylinder milled ribs shared across BOTH coin-rim (chords) and coin-edge (bridge)
 const rimRibs = [];
@@ -294,7 +372,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${hei
   </g>
   <g id="tile-glow">
     <circle cx="${cx}" cy="${cy}" r="120" fill="url(#tileGlowFill)" filter="url(#tileGlowBlur)" />
-  </g>${field.map((_, i) => i).slice(1).concat(0).map((i) => tileSvg(`field-tile-${i}`, i === 0 ? 'star' : poseNames[i % 6], i % 2 ? 'warm' : 'cool')).join('')}${poseNames.map((name, k) => tileSvg(`ring-tile-${k}`, name, 'cool')).join('')}
+  </g>${p1Order.map((k) => tileSvg(`ring-p1-${k}`, poseNames[k], 'cool')).join('')}${p2Order.map((k) => tileSvg(`ring-p2-${k}`, poseNames[k], 'cool')).join('')}${tileSvg('hero-tile', 'star', 'cool')}
 </svg>`;
 
 await mgr.createComposition({ id, name: id, width, height, fps, durationFrames, background: '#3C176E' });
@@ -540,72 +618,69 @@ await mgr.patchLayerAst(id, {
   },
 });
 
-// 6. Glass tiles. Every move uses the motion tokens; tiles that move together share an ease and a duration.
-const at = (r, deg) => [cx + r * Math.cos((deg * Math.PI) / 180), cy + r * Math.sin((deg * Math.PI) / 180)];
-const xy = (stops) => ({
-  s: true,
-  x: tr(stops.map(([t, p, e]) => [t, p[0], e])),
-  y: tr(stops.map(([t, p, e]) => [t, p[1], e])),
-});
-
-// the glow: blooms under the ring, swells and fades as the view pushes through, then pulses under the hero
+// 6. Glass tiles — true 3D billboard ring distilled via fitBezierTrack (≤ 9 keyframes per track, full iOS/Android parity).
+// the glow: blooms brightly as the ring bursts out, sweeps outward and fades as the ring expands, then pulses under hero
 await mgr.patchLayerAst(id, {
   layerId: 'tile-glow',
   ip: tilesIn,
-  opacity: tr([[tilesIn, 0, 'settle'], [tilesIn + 30, 90, 'move'], [pushAt, 80, 'exit'], [pushAt + 36, 0, 'hold'], [gatherAt + 30, 0, 'settle'], [gatherAt + 56, 100, 'move'], [gatherAt + 110, 45]]),
-  scale: tr([[tilesIn, sc(40), 'settle'], [tilesIn + 34, sc(100), 'move'], [pushAt, sc(110), 'exit'], [pushAt + 36, sc(260), 'hold'], [gatherAt + 30, sc(50), 'settle'], [gatherAt + 60, sc(110), 'move'], [gatherAt + 110, sc(95)]]),
+  opacity: tr([
+    [tilesIn, 0, 'settle'],
+    [tilesIn + 14, 95, 'move'],
+    [driftStart + 14, 0, 'hold'],
+    [gatherAt + 24, 0, 'settle'],
+    [gatherAt + 50, 100, 'move'],
+    [gatherAt + 106, 48],
+  ]),
+  scale: tr([
+    [tilesIn, sc(38), 'settle'],
+    [tilesIn + 16, sc(125), 'move'],
+    [driftStart + 14, sc(275), 'hold'],
+    [gatherAt + 24, sc(50), 'settle'],
+    [gatherAt + 54, sc(112), 'move'],
+    [gatherAt + 106, sc(96)],
+  ]),
 });
 
-// the ring: each tile bursts from the centre to its place (2f stagger), turns a little while it holds, then flies
-// outward past the camera as the view pushes through
-for (const [k] of poseNames.entries()) {
-  const deg = -90 + k * 60, t0 = tilesIn + 2 * k, turn = k % 2 ? -10 : 10;
-  await mgr.patchLayerAst(id, {
-    layerId: `ring-tile-${k}`,
-    ip: t0,
-    op: pushAt + 38,
-    position: xy([[t0, [cx, cy], 'settle'], [t0 + 28, at(ringR, deg), 'move'], [pushAt, at(ringR + 6, deg), 'exit'], [pushAt + 36, at(430, deg)]]),
-    scale: tr([[t0, sc(0), 'overshoot'], [t0 + 28, sc(100), 'move'], [pushAt, sc(104), 'exit'], [pushAt + 36, sc(250)]]),
-    rotation: tr([[t0, turn * 2, 'settle'], [t0 + 28, 0, 'move'], [pushAt + 36, -turn]]),
-  });
+// Ring Phase 1 (f496 → f611: burst + living drift + 3D Sweep 1 through Crossing #1 to Compact 180°)
+// Ring Phase 2 (f611 → f726: 3D Sweep 2 through Crossing #2 to 360° + post-drift + spiral gather)
+const p1Seeds = [tilesIn, tilesIn + 16, driftStart, spinStart, Math.round(tCross1), spinMid];
+const p2Seeds = [spinMid, Math.round(tCross2), spinEnd, gatherAt, gatherAt + 20, gatherEnd];
+const leanOf = (k, t) => {
+  const vx = ringPose(k, t + 0.5).x - ringPose(k, t - 0.5).x;
+  return Math.tanh(vx / 14) * 5.5;
+};
+let worstFitErr = 0;
+for (let k = 0; k < poseNames.length; k++) {
+  for (const [phase, ip, op, seeds] of [
+    ['p1', tilesIn, spinMid, p1Seeds],
+    ['p2', spinMid, gatherEnd, p2Seeds],
+  ]) {
+    const fx = fitBezierTrack(seeds, (t) => ringPose(k, t).x, { maxKnots: 9, tol: 1.0 });
+    const fy = fitBezierTrack(seeds, (t) => ringPose(k, t).y, { maxKnots: 9, tol: 1.0 });
+    const fs = fitBezierTrack(seeds, (t) => ringPose(k, t).scale, { maxKnots: 9, tol: 1.0, vec3: true });
+    const fr = fitBezierTrack(seeds, (t) => leanOf(k, t), { maxKnots: 8, tol: 0.4 });
+    const fo = fitBezierTrack(seeds, (t) => ringPose(k, t).opacity, { maxKnots: 8, tol: 1.0 });
+    worstFitErr = Math.max(worstFitErr, fx.maxErr, fy.maxErr, fs.maxErr);
+    await mgr.patchLayerAst(id, {
+      layerId: `ring-${phase}-${k}`,
+      ip,
+      op,
+      position: { s: true, x: fx.track, y: fy.track },
+      scale: fs.track,
+      rotation: fr.track,
+      opacity: fo.track,
+    });
+  }
 }
 
-// the field: tiles grow out of the centre behind the ring and drift outward, nearer ones bigger and faster (3f
-// stagger); then they pull away into the centre and fade, except the hero, which turns upright and settles
-for (const [i, [deg, rOut, depth, turn]] of field.entries()) {
-  const t0 = fieldIn + 3 * i;
-  const id_ = `field-tile-${i}`;
-  if (i === 7) {
-    // swoops from just right of centre past the bottom-right, growing huge: flying past the camera (accelerates)
-    const w0 = fieldIn + 40;
-    await mgr.patchLayerAst(id, {
-      layerId: id_, ip: w0, op: w0 + 44,
-      position: xy([[w0, [cx + 30, cy + 10], 'exit'], [w0 + 42, [cx + 330, cy + 360]]]),
-      scale: tr([[w0, sc(30), 'exit'], [w0 + 42, sc(420)]]),
-      rotation: tr([[w0, turn, 'exit'], [w0 + 42, -turn]]),
-      opacity: tr([[w0, 0, 'settle'], [w0 + 8, 100]]),
-    });
-    continue;
-  }
-  if (i === 0) {
-    // the hero drifts in near the top, then turns upright and settles in the centre (overshoot: it has character)
-    await mgr.patchLayerAst(id, {
-      layerId: id_, ip: t0,
-      position: xy([[t0, [cx, cy], 'intro'], [gatherAt, at(150, deg), 'move'], [gatherAt + 40, [cx, cy]]]),
-      scale: tr([[t0, sc(0), 'intro'], [gatherAt, sc(100 * depth * 0.8), 'overshoot'], [gatherAt + 40, sc(170)]]),
-      rotation: tr([[t0, 0, 'intro'], [gatherAt, turn, 'overshoot'], [gatherAt + 40, 0]]),
-      opacity: tr([[t0, 0, 'settle'], [t0 + 10, 100]]),
-    });
-    continue;
-  }
-  await mgr.patchLayerAst(id, {
-    layerId: id_, ip: t0, op: gatherAt + 40,
-    position: xy([[t0, [cx, cy], 'intro'], [gatherAt, at(rOut, deg), 'move'], [gatherAt + 36, at(rOut * 0.25, deg)]]),
-    scale: tr([[t0, sc(0), 'intro'], [gatherAt, sc(100 * depth), 'move'], [gatherAt + 36, sc(20)]]),
-    rotation: tr([[t0, 0, 'intro'], [gatherAt, turn, 'move'], [gatherAt + 36, turn * 2]]),
-    opacity: tr([[t0, 0, 'settle'], [t0 + 10, 100, 'hold'], [gatherAt + 10, 100, 'move'], [gatherAt + 36, 0]]),
-  });
-}
+// the hero: grows out of the centre as the ring spirals in, and settles (overshoot: the one moment with character)
+const heroLean = 6;
+await mgr.patchLayerAst(id, {
+  layerId: 'hero-tile',
+  ip: gatherAt + 8,
+  scale: tr([[gatherAt + 8, sc(0), 'overshoot'], [gatherAt + 48, sc(170)]]),
+  rotation: tr([[gatherAt + 8, -heroLean, 'settle'], [gatherAt + 48, 0]]),
+});
 
 const compiled = await mgr.compile(id);
-console.log(`Built "${id}" → layers: ${compiled.health.layerCount}, kf: ${compiled.health.totalKeyframes}, maxPerTrack: ${compiled.health.maxKeyframesPerTrack}, mobile: ${compiled.health.mobileReady}`);
+console.log(`Built "${id}" → layers: ${compiled.health.layerCount}, kf: ${compiled.health.totalKeyframes}, maxPerTrack: ${compiled.health.maxKeyframesPerTrack}, mobile: ${compiled.health.mobileReady}, max3DFitErr: ${worstFitErr.toFixed(2)}`);

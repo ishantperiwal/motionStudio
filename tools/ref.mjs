@@ -4,12 +4,15 @@
 //   npm run ref -- compare <ref>/<moment> <scene> <a-b>
 //       one image: the reference moment (top row) over the film's frames a–b (bottom row), at the same four points
 //       (start, ⅓, ⅔, end), to check a scene against the moment it borrows from. Written to out/compare/.
+//   npm run ref -- strip <ref>/<moment> <a-b> [step]
+//       on-demand dense contact strip over frames a–b of a reference moment (default step 2, or 1 for ≤20 frames),
+//       for fast spikes or 3D maneuvers where sheet.png's 4th-frame grid is too sparse. Written to out/compare/.
 //   npm run ref -- remeasure <ref>/<moment>   measure a moment again (one that failed), with its saved span and box
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, PROJECT } from '../server/project.mjs';
-import { addLink, addFile, listRefs, listMoments, jobs, readRef, remeasureMoment, PREFIX, REFS } from '../server/refs.mjs';
+import { addLink, addFile, listRefs, listMoments, jobs, readRef, remeasureMoment, renderMomentStrip, PREFIX, REFS } from '../server/refs.mjs';
 
 const [cmd, ...args] = process.argv.slice(2);
 const rel = (p) => path.relative(process.cwd(), p) || '.';
@@ -57,7 +60,20 @@ if (cmd === 'list') {
   sh('ffmpeg', ['-v', 'error', '-y', ...inputs, '-filter_complex', '[0][1][2][3]hstack=4[r];[4][5][6][7]hstack=4[o];[r][o]vstack', file]);
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`${rel(file)}\n  top: the reference moment at its start, ⅓, ⅔, end · bottom: ${scene} frames ${ours.join(', ')}`);
+} else if (cmd === 'strip' && args.length >= 2) {
+  const [refMoment, span, ...rest] = args;
+  const [rid, mid0] = refMoment.replace(PREFIX, '').split('/');
+  const mdir = path.join(REFS, rid, 'moments');
+  const mid = fs.existsSync(mdir) && fs.readdirSync(mdir).find((d) => d === mid0 || d.startsWith(mid0) || d.endsWith(mid0));
+  if (!mid) { console.error(`no moment "${mid0}" on reference "${rid}" (npm run ref -- list)`); process.exit(1); }
+  const [a, b] = span.split('-').map(Number);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) { console.error('usage: npm run ref -- strip <ref>/<moment> <a-b> [step]'); process.exit(1); }
+  const stepIdx = rest.indexOf('--step');
+  const rawStep = stepIdx >= 0 ? rest[stepIdx + 1] : rest.find((s) => /^\d+$/.test(s) || /^step=\d+$/.test(s))?.replace(/^step=/, '');
+  const step = rawStep ? Number(rawStep) : undefined;
+  const res = await renderMomentStrip(rid, mid, { from: a, to: b, step });
+  console.log(`${rel(res.outPath)}\n  frames ${res.frames[0]}–${res.frames[res.frames.length - 1]} (step ${res.step}, ${res.frames.length} tiles at ${res.fps} fps)`);
 } else {
-  console.log('usage: npm run ref -- list | add <link|file> | compare <ref>/<moment> <scene> <a-b> | remeasure <ref>/<moment>');
+  console.log('usage: npm run ref -- list | add <link|file> | compare <ref>/<moment> <scene> <a-b> | strip <ref>/<moment> <a-b> [step] | remeasure <ref>/<moment>');
 }
 process.exit(0);

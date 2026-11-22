@@ -215,26 +215,26 @@ export function patchLayerInLast(
   return { doc: patchedDoc, ast, patchedLayerName };
 }
 
-function countPropKeyframes(prop: LottieProp<unknown> | LottiePositionProp | undefined): number[] {
+function collectPropTracks(prop: LottieProp<unknown> | LottiePositionProp | undefined): LottieKeyframe<unknown>[][] {
   if (!prop) return [];
   if ('s' in prop && prop.s === true) {
-    return [...countPropKeyframes(prop.x), ...countPropKeyframes(prop.y)];
+    return [...collectPropTracks(prop.x), ...collectPropTracks(prop.y)];
   }
   if ('a' in prop && prop.a === 1 && Array.isArray(prop.k)) {
-    return [prop.k.length];
+    return [prop.k as LottieKeyframe<unknown>[]];
   }
   return [];
 }
 
-function collectLayerKeyframeCounts(layer: LottieLayer): number[] {
-  const counts: number[] = [
-    ...countPropKeyframes(layer.ks.a),
-    ...countPropKeyframes(layer.ks.p),
-    ...countPropKeyframes(layer.ks.s),
-    ...countPropKeyframes(layer.ks.r),
-    ...countPropKeyframes(layer.ks.o),
-    ...countPropKeyframes(layer.ks.sk),
-    ...countPropKeyframes(layer.ks.sa),
+function collectLayerTracks(layer: LottieLayer): LottieKeyframe<unknown>[][] {
+  const tracks: LottieKeyframe<unknown>[][] = [
+    ...collectPropTracks(layer.ks.a),
+    ...collectPropTracks(layer.ks.p),
+    ...collectPropTracks(layer.ks.s),
+    ...collectPropTracks(layer.ks.r),
+    ...collectPropTracks(layer.ks.o),
+    ...collectPropTracks(layer.ks.sk),
+    ...collectPropTracks(layer.ks.sa),
   ];
 
   if (layer.ty === 4) {
@@ -245,24 +245,54 @@ function collectLayerKeyframeCounts(layer: LottieLayer): number[] {
         if (item.ty === 'gr' && Array.isArray(item.it)) {
           walkShapes(item.it);
         } else if (item.ty === 'tm') {
-          counts.push(
-            ...countPropKeyframes(item.s as LottieProp<number> | undefined),
-            ...countPropKeyframes(item.e as LottieProp<number> | undefined),
-            ...countPropKeyframes(item.o as LottieProp<number> | undefined),
+          tracks.push(
+            ...collectPropTracks(item.s as LottieProp<number> | undefined),
+            ...collectPropTracks(item.e as LottieProp<number> | undefined),
+            ...collectPropTracks(item.o as LottieProp<number> | undefined),
           );
         } else if (item.ty === 'tr') {
-          counts.push(
-            ...countPropKeyframes(item.p as LottieProp<number[]> | undefined),
-            ...countPropKeyframes(item.s as LottieProp<number[]> | undefined),
-            ...countPropKeyframes(item.r as LottieProp<number> | undefined),
-            ...countPropKeyframes(item.o as LottieProp<number> | undefined),
+          tracks.push(
+            ...collectPropTracks(item.p as LottieProp<number[]> | undefined),
+            ...collectPropTracks(item.s as LottieProp<number[]> | undefined),
+            ...collectPropTracks(item.r as LottieProp<number> | undefined),
+            ...collectPropTracks(item.o as LottieProp<number> | undefined),
           );
         }
       }
     };
     walkShapes(layer.shapes);
   }
-  return counts;
+  return tracks;
+}
+
+const MAX_KEYFRAMES_PER_SEC = 8;
+const MAX_NON_HOLD_PER_1S_WINDOW = 10;
+
+function measureTrackDensity(kfs: LottieKeyframe<unknown>[], fps: number): {
+  count: number;
+  kfPerSec: number;
+  maxInWindow: number;
+  dense: boolean;
+} {
+  const count = kfs.length;
+  if (count <= 1) return { count, kfPerSec: 0, maxInWindow: count, dense: false };
+  const sorted = [...kfs].sort((a, b) => a.t - b.t);
+  const spanS = Math.max(1 / fps, (sorted[sorted.length - 1]!.t - sorted[0]!.t) / fps);
+  const kfPerSec = (count - 1) / spanS;
+
+  // Peak non-hold keyframes inside any 1-second sliding window (ignores intentional hold snaps)
+  const nonHoldTimes = sorted.filter((kf) => kf.h !== 1).map((kf) => kf.t);
+  let maxInWindow = 0;
+  let left = 0;
+  for (let right = 0; right < nonHoldTimes.length; right++) {
+    while (nonHoldTimes[right]! - nonHoldTimes[left]! > fps) left++;
+    const win = right - left + 1;
+    if (win > maxInWindow) maxInWindow = win;
+  }
+
+  // Tracks with <= 10 keyframes always pass; longer tracks are checked by density so clean multi-act layers pass.
+  const dense = count > 10 && (kfPerSec > MAX_KEYFRAMES_PER_SEC || maxInWindow > MAX_NON_HOLD_PER_1S_WINDOW);
+  return { count, kfPerSec, maxInWindow, dense };
 }
 
 export function extractLayerKeyframesAtFrame(
@@ -313,7 +343,7 @@ export function extractLayerKeyframesAtFrame(
 
 /**
  * Inspects a Lottie document via relottie LAST AST for:
- * - Anti-Bake compliance (flags dense baked keyframe tracks > 10 keyframes)
+ * - Anti-Bake compliance (flags baked tracks with > 10 keyframes AND density > 8 kf/s or > 10 non-hold kf in any 1s window)
  * - Cross-platform iOS/Android parity (expressions, unsupported blend modes, SVG filters pending raster bake)
  */
 export function inspectLottieHealth(
@@ -322,6 +352,7 @@ export function inspectLottieHealth(
 ): LottieHealthReport {
   const { ast, json } = roundTripThroughRelottie(doc);
   const issues: HealthIssue[] = [];
+  const fps = Math.max(1, doc.fr || 60);
 
   if (ast.hasExpressions) {
     issues.push({
@@ -333,19 +364,26 @@ export function inspectLottieHealth(
 
   let totalKeyframes = 0;
   let maxKeyframesPerTrack = 0;
+  let maxKeyframeDensityPerSec = 0;
+  let hasAntiBakeViolation = false;
 
   for (const layer of doc.layers) {
     const id = layer.ln ?? layer.nm;
-    const counts = collectLayerKeyframeCounts(layer);
-    for (const c of counts) {
-      totalKeyframes += c;
-      if (c > maxKeyframesPerTrack) maxKeyframesPerTrack = c;
-      if (c > 10) {
+    const tracks = collectLayerTracks(layer);
+    for (const track of tracks) {
+      const m = measureTrackDensity(track, fps);
+      totalKeyframes += m.count;
+      if (m.count > maxKeyframesPerTrack) maxKeyframesPerTrack = m.count;
+      if (m.count > 10 && m.kfPerSec > maxKeyframeDensityPerSec) {
+        maxKeyframeDensityPerSec = m.kfPerSec;
+      }
+      if (m.dense) {
+        hasAntiBakeViolation = true;
         issues.push({
           severity: 'warning',
           code: 'ANTI_BAKE_VIOLATION',
           layerId: id,
-          message: `Layer "${id}" has a dense keyframe track (${c} keyframes). Prefer 2–4 parametric keyframes with cubic-bezier tangents.`,
+          message: `Layer "${id}" has a baked keyframe track (${m.count} kf · ${m.kfPerSec.toFixed(1)} kf/s · peak ${m.maxInWindow}/s). Use fewer parametric keyframes with cubic-bezier tangents.`,
         });
       }
     }
@@ -369,13 +407,14 @@ export function inspectLottieHealth(
     });
   }
 
-  const antiBakePass = maxKeyframesPerTrack <= 10;
+  const antiBakePass = !hasAntiBakeViolation;
   const mobileReady = !issues.some((i) => i.severity === 'error');
 
   return {
     layerCount: doc.layers.length,
     totalKeyframes,
     maxKeyframesPerTrack,
+    maxKeyframeDensityPerSec: Math.round(maxKeyframeDensityPerSec * 100) / 100,
     antiBakePass,
     filterLayers: [...filterLayerIds],
     jsonBytes: Buffer.byteLength(json, 'utf8'),

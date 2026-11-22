@@ -473,6 +473,7 @@ export interface LottieHealthReport {
   layerCount: number;
   totalKeyframes: number;
   maxKeyframesPerTrack: number;
+  maxKeyframeDensityPerSec: number;
   antiBakePass: boolean;
   filterLayers: string[];
   jsonBytes: number;

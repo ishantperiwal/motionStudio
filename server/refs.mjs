@@ -540,3 +540,48 @@ async function sheets(dir, { n, fps, crop, region, vw, ctx, motion }) {
     await page.locator('#context').screenshot({ path: path.join(dir, 'context.png') });
   } finally { await browser.close(); await fsp.rm(file, { force: true }); }
 }
+
+// On-demand dense contact strip over a sub-span of an already-captured moment (never run automatically on save).
+// Uses the moment's saved frames/fNNNN.jpg + motion.json so fast or 3D maneuvers can be inspected at step 1 or 2.
+export async function renderMomentStrip(rid, mid, { from = 1, to, step, outPath } = {}) {
+  const dir = path.join(REFS, rid, 'moments', mid);
+  const fdir = path.join(dir, 'frames');
+  if (!fs.existsSync(fdir)) throw new Error(`no frames in references/${rid}/moments/${mid}/frames`);
+  const total = fs.readdirSync(fdir).filter((f) => /^f\d+\.jpg$/i.test(f)).length;
+  if (!total) throw new Error(`empty frames folder for ${rid}/${mid}`);
+  const motion = readJSON(path.join(dir, 'motion.json'));
+  const fps = motion?.fps || 60;
+  const a = Math.max(1, Math.min(total, Math.round(from)));
+  const b = Math.max(a, Math.min(total, Math.round(to ?? total)));
+  const st = Math.max(1, Math.round(step ?? (b - a <= 20 ? 1 : 2)));
+  const cells = [];
+  for (let f = a; f <= b; f += st) cells.push(f);
+  if (cells[cells.length - 1] !== b) cells.push(b);
+  const inMove = (f) => Boolean(motion?.moves?.some((m) => f >= m.fromFrame && f <= m.toFrame));
+  const cols = Math.min(8, cells.length), cw = Math.min(240, Math.floor(1920 / cols) - 8);
+  const stepLabel = st === 1 ? 'Every frame' : `Every ${st}${st === 2 ? 'nd' : st === 3 ? 'rd' : 'th'} frame`;
+  const html = `<!doctype html><meta charset="utf-8"><style>
+    body{margin:0;background:#101114;color:#e7e8ea;font:600 13px -apple-system,system-ui,sans-serif}
+    #strip{display:inline-block;padding:14px}
+    h1{font-size:14px;margin:0 0 10px;font-weight:650} h1 span{color:#8b8f98;font-weight:500}
+    .grid{display:grid;grid-template-columns:repeat(${cols},${cw}px);gap:6px}
+    .c{position:relative;background:#000;border:2px solid #222;border-radius:4px;overflow:hidden}
+    .c.m{border-color:#F2711C} .c img{display:block;width:100%}
+    .c b{position:absolute;left:0;top:0;background:rgba(0,0,0,.72);padding:2px 6px;font-size:12px;border-bottom-right-radius:4px}
+  </style>
+  <div id="strip"><h1>${stepLabel}, f${a}–f${b} <span>· ${cells.length} tiles at ${fps} fps · orange = moving</span></h1>
+  <div class="grid">${cells.map((f) => `<div class="c${inMove(f) ? ' m' : ''}"><img src="frames/f${String(f).padStart(4, '0')}.jpg"><b>f${f} · ${(f - 1) / fps < 10 ? ((f - 1) / fps).toFixed(2) : ((f - 1) / fps).toFixed(1)}s</b></div>`).join('')}</div></div>`;
+  const dest = outPath || path.join(PROJECT, 'out', 'compare', `${rid}-strip-${a}-${b}.png`);
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  const file = path.join(dir, `_strip-${Date.now()}.html`);
+  await fsp.writeFile(file, html);
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch(CHROME);
+  try {
+    const page = await browser.newPage({ viewport: { width: 2200, height: 1200 } });
+    await page.goto(`file://${file}`);
+    await page.evaluate(() => Promise.all([...document.images].map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
+    await page.locator('#strip').screenshot({ path: dest });
+  } finally { await browser.close(); await fsp.rm(file, { force: true }); }
+  return { outPath: dest, frames: cells, step: st, fps };
+}

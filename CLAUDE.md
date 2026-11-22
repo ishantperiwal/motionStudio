@@ -144,10 +144,12 @@ from an earlier way of working: useful, but the frames come first.
 **Using one.** A film note points at moments in `useRefs` (`[{ ref, id, name }]`, added with "+ reference"), or names
 one in its text. There is no stored write-up: read the moment's source with this note's request in mind, every time.
 1. Read in order and stop when you have enough: the note's text; `context.png`, `sheet.png` and `motion.json` (the
-   overview); then full-size stills when the note asks about the look (type, texture and colour need detail) or the
-   sheet leaves something unclear; then individual frames, zoomed into the part in question (`ffmpeg … -vf
-   crop=…,scale=…`), for busy moments where the measurements merge several things. The numbers are approximate:
-   trust the frames, use the numbers for timing, easing and colours.
+   overview); when `motion.json`'s change sparkline shows a fast spike or a 3D/multi-element maneuver that `sheet.png`'s
+   4th-frame grid blurs over, pull an on-demand dense strip with `npm run ref -- strip <ref>/<moment id> <a-b> [step]`
+   (default step 2; written to `out/compare/`); then full-size stills when the note asks about the look (type, texture
+   and colour need detail) or the sheet leaves something unclear; then individual frames, zoomed into the part in
+   question (`ffmpeg … -vf crop=…,scale=…`), for busy moments where the measurements merge several things. The numbers
+   are approximate: trust the frames, use the numbers for timing, easing and colours.
 2. Build it with the scene contract and the motion principles: map timing onto the film's frame rate and beats.
 3. **Compare before reporting:** `npm run ref -- compare <ref>/<moment id> <scene> <a-b>` writes one image with
    the moment's frames (top) over the film's frames a–b (bottom) at the same four points; look at it, and for

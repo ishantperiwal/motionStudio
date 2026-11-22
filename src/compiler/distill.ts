@@ -412,3 +412,187 @@ export function distillMotionCurve(
     primaryBezier,
   };
 }
+
+export interface FitBezierTrackOptions {
+  /** Maximum keyframes allowed on this track. Defaults to a density-safe budget based on track duration (~6 kf/s, min 9). */
+  maxKnots?: number;
+  /** Composition frame rate (used to compute the default density-safe knot budget). Default: 60. */
+  fps?: number;
+  /** Target max absolute reconstruction error in value units (e.g. px or %). Default: 1.0. */
+  tol?: number;
+  /** Minimum integer frame spacing between adaptively inserted knots. Default: 4. */
+  minGap?: number;
+  /** When true, emits uniform 3D scale vectors `[v, v, z]` (for Lottie `s` tracks). Default: false. */
+  vec3?: boolean;
+  /** Third component when `vec3` is true. Default: 100. */
+  z?: number;
+}
+
+export interface FitBezierTrackResult {
+  track: { a: 1; k: LottieKeyframe<number[]>[] };
+  maxErr: number;
+  count: number;
+}
+
+function solveBezierU1D(tau: number, ox: number, ix: number): number {
+  let u = tau;
+  for (let it = 0; it < 7; it++) {
+    const m = 1 - u;
+    const x = evalCubicBezier1D(u, ox, ix) - tau;
+    const dx = 3 * m * m * ox + 6 * m * u * (ix - ox) + 3 * u * u * (1 - ix);
+    if (Math.abs(x) < 1e-7 || dx < 1e-6) break;
+    u = Math.max(0, Math.min(1, u - x / dx));
+  }
+  return u;
+}
+
+function fitBezierSegment1D(t0: number, t1: number, fn: (t: number) => number) {
+  const v0 = fn(t0);
+  const v1 = fn(t1);
+  const dv = v1 - v0;
+  const n = Math.max(2, Math.round(t1 - t0));
+  const samples: Array<[number, number]> = [];
+  for (let i = 1; i < n; i++) {
+    const tau = i / n;
+    samples.push([tau, fn(t0 + (t1 - t0) * tau)]);
+  }
+  if (Math.abs(dv) < 0.05 || samples.length === 0) {
+    let worstErr = 0;
+    let worstT = Math.round((t0 + t1) / 2);
+    for (const [tau, val] of samples) {
+      const err = Math.abs(v0 + dv * tau - val);
+      if (err > worstErr) {
+        worstErr = err;
+        worstT = Math.round(t0 + tau * (t1 - t0));
+      }
+    }
+    return { ox: 0.33, oy: 0.33, ix: 0.67, iy: 0.67, worstErr, worstT };
+  }
+
+  const score = (ox: number, ix: number) => {
+    let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+    const us: number[] = [];
+    for (const [tau, val] of samples) {
+      const u = solveBezierU1D(tau, ox, ix);
+      us.push(u);
+      const m = 1 - u;
+      const A = 3 * m * m * u;
+      const B = 3 * m * u * u;
+      const rhs = (val - v0) / dv - u * u * u;
+      a11 += A * A;
+      a12 += A * B;
+      a22 += B * B;
+      b1 += A * rhs;
+      b2 += B * rhs;
+    }
+    const det = a11 * a22 - a12 * a12;
+    let oy = ox;
+    let iy = ix;
+    if (det > 1e-8) {
+      oy = Math.max(-1.6, Math.min(2.6, (a22 * b1 - a12 * b2) / det));
+      iy = Math.max(-1.6, Math.min(2.6, (a11 * b2 - a12 * b1) / det));
+    }
+    let mse = 0;
+    let worstErr = 0;
+    let worstT = Math.round((t0 + t1) / 2);
+    for (let j = 0; j < us.length; j++) {
+      const pred = v0 + dv * evalCubicBezier1D(us[j]!, oy, iy);
+      const err = Math.abs(pred - samples[j]![1]);
+      mse += err * err;
+      if (err > worstErr) {
+        worstErr = err;
+        worstT = Math.round(t0 + samples[j]![0] * (t1 - t0));
+      }
+    }
+    return { ox, oy, ix, iy, mse, worstErr, worstT };
+  };
+
+  let best = score(0.33, 0.67);
+  const grid = [0.12, 0.24, 0.36, 0.5, 0.64, 0.76, 0.88];
+  for (const ox of grid) {
+    for (const ix of grid) {
+      const c = score(ox, ix);
+      if (c.mse < best.mse) best = c;
+    }
+  }
+  for (const step of [0.06, 0.02]) {
+    const o0 = best.ox;
+    const i0 = best.ix;
+    for (const dox of [-step, 0, step]) {
+      for (const dix of [-step, 0, step]) {
+        const ox = Math.max(0.05, Math.min(0.95, o0 + dox));
+        const ix = Math.max(0.05, Math.min(0.95, i0 + dix));
+        const c = score(ox, ix);
+        if (c.mse < best.mse) best = c;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Distills an analytical 1D motion curve `fn(frame)` (e.g. a separated X, Y, scale, rotation,
+ * or opacity axis from a 3D perspective ring or camera move) into a minimal Lottie keyframe
+ * track with exact least-squares cubic-bezier tangent handles (`o.x`, `i.x` in `[0.05, 0.95]`
+ * for full iOS Core Animation / Android / Web parity). Keyframe budget scales with duration
+ * (~6 kf/s, min 9) so long single-layer tracks stay consistent without baking dense frames.
+ */
+export function fitBezierTrack(
+  seedKnots: number[],
+  fn: (frame: number) => number,
+  opts: FitBezierTrackOptions = {},
+): FitBezierTrackResult {
+  const fps = Math.max(1, opts.fps ?? 60);
+  const tol = opts.tol ?? 1.0;
+  const minGap = Math.max(1, Math.round(opts.minGap ?? 4));
+  const vec3 = opts.vec3 ?? false;
+  const zVal = opts.z ?? 100;
+
+  const knots = [...new Set(seedKnots.map((t) => Math.round(t)))].sort((a, b) => a - b);
+  if (knots.length < 2) {
+    throw new Error('fitBezierTrack requires at least 2 distinct seed knots');
+  }
+  const spanS = Math.max(1 / fps, (knots[knots.length - 1]! - knots[0]!) / fps);
+  const defaultBudget = Math.max(9, Math.floor(spanS * 6));
+  const maxKnots = Math.max(knots.length, Math.round(opts.maxKnots ?? defaultBudget));
+
+  let segs: ReturnType<typeof fitBezierSegment1D>[] = [];
+  for (;;) {
+    segs = [];
+    let maxErr = 0;
+    let worstT = -1;
+    for (let j = 0; j < knots.length - 1; j++) {
+      const fit = fitBezierSegment1D(knots[j]!, knots[j + 1]!, fn);
+      segs.push(fit);
+      if (fit.worstErr > maxErr) {
+        maxErr = fit.worstErr;
+        worstT = fit.worstT;
+      }
+    }
+    if (maxErr <= tol || knots.length >= maxKnots || worstT < 0) break;
+    if (knots.some((k) => Math.abs(k - worstT) < minGap)) break;
+    knots.push(worstT);
+    knots.sort((a, b) => a - b);
+  }
+
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const wrap = (v: number): number[] => (vec3 ? [r3(v), r3(v), zVal] : [r3(v)]);
+  const dup = (v: number): number[] => (vec3 ? [r3(v), r3(v), r3(v)] : [r3(v)]);
+
+  const k: LottieKeyframe<number[]>[] = knots.map((t, j) => {
+    const s = wrap(fn(t));
+    if (j === knots.length - 1) return { t, s };
+    const seg = segs[j]!;
+    const e = wrap(fn(knots[j + 1]!));
+    return {
+      t,
+      s,
+      e,
+      o: { x: dup(seg.ox), y: dup(seg.oy) },
+      i: { x: dup(seg.ix), y: dup(seg.iy) },
+    };
+  });
+
+  const maxErr = segs.reduce((m, s) => Math.max(m, s.worstErr), 0);
+  return { track: { a: 1, k }, maxErr: round4(maxErr), count: knots.length };
+}

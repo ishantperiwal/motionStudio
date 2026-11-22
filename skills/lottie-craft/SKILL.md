@@ -42,6 +42,12 @@ straight, corners go lumpy, and smoothing only hides it. Sampled outlines are fo
   - `edge` (connecting cylinder bridge): solid matching bronze/metallic fill with subtle corner bevel (`rx="3"`), height matching `2 * (r + strokeWidth / 2)`, scaling `0% → 100% → 0%`. **Never put straight vertical stripes inside `edge`** — they clip awkwardly across the curved face ellipse.
   - **Shared Null Rig (`ty: 3`):** Always parent `front`, `back`, `rim`, and `edge` to a single Null rig for toss lift (`y`) and wrist tilt (`r`) so all layers stay pixel-locked under rotation.
 
+## 4b. 3D Orbits & Camera Perspective (Billboard Rings, Camera Moves)
+When a reference or note calls for a 3D ring, carousel, orbit, or camera push/pull where elements stay flat facing the screen and scale with depth:
+- **Compute real 3D perspective, never flat 2D swaps:** Evaluate `(x, y, z)` on the 3D rig (orbit angle, Y-axis rotation, subtle camera elevation tilt, camera Z pullback/push-in) with perspective `F / (F + Zc + Z)` and depth-based back-element dimming.
+- **Distill to minimal native Lottie keyframes (`fitBezierTrack`):** Never bake 60fps frames. Use `fitBezierTrack(seedKnots, fn, { tol: 1.0 })` (exported from `dist/compiler/index.js`) on each separated axis (`x`, `y`, uniform `scale` with `vec3: true`, `rotation`, `opacity`). Its default knot budget scales safely with duration (`~6 kf/s`, min 9) and clamps Bezier `x` handles to `[0.05, 0.95]` so both short moves and multi-act single-layer animations pass density-based `antiBakePass` and `mobileReady`.
+- **Keep one consistent layer — split ONLY for dynamic Z-order:** Never split a layer just to reduce keyframe count. Split into back-to-front depth-sorted layer phases with an exact `ip` / `op` handoff at a non-overlapping face-on frame (e.g., 180°) **only** when a 360° spin requires foreground and background elements to swap occlusion order.
+
 ## 5. Mandatory Visual Verification Before `npm run done`
 **Never trust JSON math alone.** Before finishing any Lottie task or note:
 1. Run **`npm run verify-lottie -- <scene>`** (or MCP tool `render_contact_sheet`). It renders 8 key frames — including midpoints and 90° crossings — into `out/<scene>-sheet.png` in ~1s.

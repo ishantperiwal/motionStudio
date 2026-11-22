@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CompositionManager,
   distillMotionCurve,
+  fitBezierTrack,
   geometry,
   inspectLottieHealth,
   normalizeSvgToLottieLayers,
@@ -408,4 +409,101 @@ test('Geometry kit constructs exact shapes, booleans and fillets, and matches mo
   const area = (p) => geometry.area(geometry.fromLottiePath(p));
   assert.ok(Math.abs(area(a) - area(tri)) / area(tri) < 1e-4, 'matched triangle keeps its exact outline');
   assert.ok(Math.abs(area(b) - area(cloverPath)) / area(cloverPath) < 1e-4, 'matched clover keeps its exact outline');
+});
+
+test('fitBezierTrack distills 3D perspective orbit curves into <= 9 mobile-safe Lottie keyframes', () => {
+  // 180° 3D perspective ring sweep: x = 256 + 180*cos(phi)*persp, scale = 140*persp
+  const pose = (t) => {
+    const u = Math.max(0, Math.min(1, t / 60));
+    const p = u * u * (3 - 2 * u);
+    const phi = Math.PI * p;
+    const z = -180 * Math.sin(phi);
+    const zc = 220 * Math.sin(Math.PI * p) ** 2;
+    const persp = 440 / (440 + zc + z);
+    return { x: 256 + 180 * Math.cos(phi) * persp, scale: 140 * persp };
+  };
+  const fx = fitBezierTrack([0, 30, 60], (t) => pose(t).x, { maxKnots: 9, tol: 1.0 });
+  const fs = fitBezierTrack([0, 30, 60], (t) => pose(t).scale, { maxKnots: 9, tol: 1.0, vec3: true });
+
+  assert.ok(fx.count <= 9 && fx.count >= 3, `expected 3..9 x knots, got ${fx.count}`);
+  assert.ok(fs.count <= 9 && fs.count >= 3, `expected 3..9 scale knots, got ${fs.count}`);
+  assert.ok(fx.maxErr < 1.5, `expected tight x fit (<1.5px), got ${fx.maxErr}`);
+  assert.ok(fs.maxErr < 1.5, `expected tight scale fit (<1.5%), got ${fs.maxErr}`);
+  for (const kf of fx.track.k.slice(0, -1)) {
+    assert.ok(kf.o.x[0] >= 0 && kf.o.x[0] <= 1, 'o.x must stay in [0, 1] for iOS/Android');
+    assert.ok(kf.i.x[0] >= 0 && kf.i.x[0] <= 1, 'i.x must stay in [0, 1] for iOS/Android');
+  }
+  assert.equal(fs.track.k[0].s.length, 3, 'vec3 scale keyframes emit [v, v, 100]');
+  assert.equal(fs.track.k[0].s[2], 100);
+});
+
+test('Anti-bake health uses keyframe density: clean multi-act layer passes, baked bursts fail', () => {
+  const makeDoc = (kfs, op = 480) => ({
+    v: '5.9.0',
+    fr: 60,
+    ip: 0,
+    op,
+    w: 512,
+    h: 512,
+    nm: 'density-test',
+    ddd: 0,
+    assets: [],
+    layers: [
+      {
+        ddd: 0,
+        ind: 1,
+        ty: 4,
+        nm: 'dot',
+        ln: 'dot',
+        sr: 1,
+        ks: {
+          o: { a: 0, k: 100 },
+          r: { a: 0, k: 0 },
+          p: { s: true, x: { a: 1, k: kfs }, y: { a: 0, k: 256 } },
+          a: { a: 0, k: [0, 0, 0] },
+          s: { a: 0, k: [100, 100, 100] },
+        },
+        ao: 0,
+        shapes: [],
+        ip: 0,
+        op,
+        st: 0,
+      },
+    ],
+  });
+
+  // 1. Clean 6-second multi-act 3D orbit distilled with fitBezierTrack (> 10 keyframes, low density ~3 kf/s)
+  const longFit = fitBezierTrack(
+    [0, 90, 180, 270, 360],
+    (t) => 256 + 160 * Math.cos((t / 120) * Math.PI * 2),
+    { fps: 60, tol: 1.0 },
+  );
+  assert.ok(longFit.count > 10, `6s 3-revolution curve should naturally use > 10 knots, got ${longFit.count}`);
+  assert.ok(longFit.maxErr < 1.5, `expected tight multi-act fit, got ${longFit.maxErr}`);
+  const cleanHealth = inspectLottieHealth(makeDoc(longFit.track.k, 360), []);
+  assert.equal(cleanHealth.antiBakePass, true, 'Clean 6s multi-act layer must pass density anti-bake');
+
+  // 2. Baked 1-second track (20 keyframes in 60 frames = 19 kf/s) -> must FAIL
+  const baked1s = Array.from({ length: 20 }, (_, i) => ({
+    t: i * 3,
+    s: [100 + i * 10],
+    ...(i < 19 ? { e: [100 + (i + 1) * 10], o: { x: [0.33], y: [0.33] }, i: { x: [0.67], y: [0.67] } } : {}),
+  }));
+  const bakedHealth = inspectLottieHealth(makeDoc(baked1s, 60), []);
+  assert.equal(bakedHealth.antiBakePass, false, 'Baked 1s track must fail anti-bake');
+  assert.ok(bakedHealth.issues.some((i) => i.code === 'ANTI_BAKE_VIOLATION'));
+
+  // 3. Hidden 0.5-second baked burst inside a 10-second track -> must FAIL via 1s sliding window
+  const hiddenBurst = [
+    ...Array.from({ length: 14 }, (_, i) => ({
+      t: i * 2,
+      s: [100 + i * 5],
+      e: [100 + (i + 1) * 5],
+      o: { x: [0.33], y: [0.33] },
+      i: { x: [0.67], y: [0.67] },
+    })),
+    { t: 600, s: [200] },
+  ];
+  const burstHealth = inspectLottieHealth(makeDoc(hiddenBurst, 600), []);
+  assert.equal(burstHealth.antiBakePass, false, 'Baked burst inside long track must still fail anti-bake');
 });
