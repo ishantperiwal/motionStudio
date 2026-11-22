@@ -1,0 +1,945 @@
+{
+  "schemaVersion": 1,
+  "id": "demo-3d-engine",
+  "name": "3D Engine Demo",
+  "width": 800,
+  "height": 460,
+  "fps": 60,
+  "durationFrames": 180,
+  "background": "#15171c",
+  "tokens": {
+    "ease": {
+      "move": [
+        0.45,
+        0,
+        0.2,
+        1
+      ],
+      "intro": [
+        0.1,
+        0.1,
+        0.2,
+        1
+      ],
+      "settle": [
+        0.16,
+        1,
+        0.3,
+        1
+      ],
+      "fade": [
+        0.25,
+        0.1,
+        0.25,
+        1
+      ],
+      "snap": [
+        0.2,
+        0,
+        0,
+        1
+      ],
+      "exit": [
+        0.5,
+        0,
+        0.85,
+        0.4
+      ],
+      "overshoot": [
+        0.34,
+        1.56,
+        0.64,
+        1
+      ],
+      "anticipate": [
+        0.36,
+        -0.4,
+        0.5,
+        1
+      ],
+      "elastic": [
+        0.68,
+        -0.55,
+        0.27,
+        1.55
+      ],
+      "linear": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "whip": [
+        0.7,
+        0,
+        0.15,
+        1
+      ]
+    },
+    "dur": {
+      "instant": 4,
+      "quick": 8,
+      "short": 14,
+      "medium": 24,
+      "long": 36
+    },
+    "durationScaleMs": {
+      "instant": 120,
+      "quick": 220,
+      "short": 360,
+      "medium": 520,
+      "long": 800
+    },
+    "springs": {
+      "snappy": {
+        "stiffness": 420,
+        "damping": 28,
+        "mass": 1
+      },
+      "bouncy": {
+        "stiffness": 300,
+        "damping": 16,
+        "mass": 1
+      },
+      "gentle": {
+        "stiffness": 180,
+        "damping": 24,
+        "mass": 1
+      },
+      "stiff": {
+        "stiffness": 580,
+        "damping": 38,
+        "mass": 1
+      },
+      "playful": {
+        "stiffness": 260,
+        "damping": 13,
+        "mass": 1
+      }
+    },
+    "overshootLimit": 0.18
+  },
+  "assets": [
+    {
+      "id": "demo",
+      "sourceFile": "assets/demo.svg",
+      "layerIds": [
+        "machine-z-dial-pos",
+        "machine-z-dial-pos-inner-base",
+        "machine-z-dial-pos-inner-wall",
+        "machine-z-dial-wall",
+        "machine-z-knobL-pos",
+        "machine-z-knobL-wall",
+        "machine-z-button-highlight",
+        "machine-z-button-shade",
+        "machine-z-button-body",
+        "machine-y-knobL-pos",
+        "machine-y-knobL-wall",
+        "machine-y-dial-pos",
+        "machine-y-dial-pos-inner-base",
+        "machine-y-dial-pos-inner-wall",
+        "machine-y-dial-wall",
+        "machine-y-button-highlight",
+        "machine-y-button-shade",
+        "machine-y-button-body",
+        "machine-x-knobL-pos",
+        "machine-x-knobL-wall",
+        "machine-x-button-highlight",
+        "machine-x-button-shade",
+        "machine-x-button-body",
+        "machine-x-dial-pos",
+        "machine-x-dial-pos-inner-base",
+        "machine-x-dial-pos-inner-wall",
+        "machine-x-dial-wall",
+        "machine-w-button-highlight",
+        "machine-w-button-shade",
+        "machine-w-button-body",
+        "machine-w-knobL-pos",
+        "machine-w-knobL-wall",
+        "machine-w-dial-pos",
+        "machine-w-dial-pos-inner-base",
+        "machine-w-dial-pos-inner-wall",
+        "machine-w-dial-wall",
+        "machine-v-button-highlight",
+        "machine-v-button-shade",
+        "machine-v-button-body",
+        "machine-v-dial-pos",
+        "machine-v-dial-pos-inner-base",
+        "machine-v-dial-pos-inner-wall",
+        "machine-v-dial-wall",
+        "machine-v-knobL-pos",
+        "machine-v-knobL-wall",
+        "machine-u-dial-pos",
+        "machine-u-dial-pos-inner-base",
+        "machine-u-dial-pos-inner-wall",
+        "machine-u-dial-wall",
+        "machine-u-button-highlight",
+        "machine-u-button-shade",
+        "machine-u-button-body",
+        "machine-u-knobL-pos",
+        "machine-u-knobL-wall",
+        "machine-t-badge-front",
+        "machine-t-badge-edge-lit",
+        "machine-t-badge-edge",
+        "machine-t-body-f4",
+        "machine-t-body-f2",
+        "machine-t-body-f1",
+        "machine-t-wheelL-neg-veil",
+        "machine-t-wheelL-neg",
+        "machine-t-wheelL-neg-base",
+        "machine-t-wheelL-neg-hole",
+        "machine-t-wheelL-wall",
+        "machine-t-wheelR-neg",
+        "machine-t-wheelR-wall",
+        "machine-t-nozzle-neg",
+        "machine-t-nozzle-wall",
+        "machine-s-badge-front",
+        "machine-s-badge-edge-lit",
+        "machine-s-badge-edge",
+        "machine-s-wheelL-neg-veil",
+        "machine-s-wheelL-neg",
+        "machine-s-wheelL-neg-base",
+        "machine-s-wheelL-neg-hole",
+        "machine-s-wheelL-wall",
+        "machine-s-body-f4",
+        "machine-s-body-f2",
+        "machine-s-body-f1",
+        "machine-s-wheelR-neg",
+        "machine-s-wheelR-wall",
+        "machine-s-nozzle-neg",
+        "machine-s-nozzle-wall",
+        "machine-r-badge-front",
+        "machine-r-badge-edge-lit",
+        "machine-r-badge-edge",
+        "machine-r-wheelL-neg-veil",
+        "machine-r-wheelL-neg",
+        "machine-r-wheelL-neg-base",
+        "machine-r-wheelL-neg-hole",
+        "machine-r-wheelL-wall",
+        "machine-r-body-f4",
+        "machine-r-body-f2",
+        "machine-r-body-f1",
+        "machine-r-nozzle-neg",
+        "machine-r-nozzle-wall",
+        "machine-r-wheelR-neg",
+        "machine-r-wheelR-wall",
+        "machine-q-wheelL-neg-veil",
+        "machine-q-wheelL-neg",
+        "machine-q-wheelL-neg-base",
+        "machine-q-wheelL-neg-hole",
+        "machine-q-wheelL-wall",
+        "machine-q-badge-front",
+        "machine-q-badge-edge-lit",
+        "machine-q-badge-edge",
+        "machine-q-body-f4",
+        "machine-q-body-f2",
+        "machine-q-body-f1",
+        "machine-q-nozzle-neg",
+        "machine-q-nozzle-wall",
+        "machine-q-wheelR-neg",
+        "machine-q-wheelR-wall",
+        "machine-p-wheelL-neg-veil",
+        "machine-p-wheelL-neg",
+        "machine-p-wheelL-neg-base",
+        "machine-p-wheelL-neg-hole",
+        "machine-p-wheelL-wall",
+        "machine-p-badge-back",
+        "machine-p-badge-edge-lit",
+        "machine-p-badge-edge",
+        "machine-p-nozzle-pos",
+        "machine-p-nozzle-wall",
+        "machine-p-body-f4",
+        "machine-p-body-f2",
+        "machine-p-body-f0",
+        "machine-p-wheelR-neg",
+        "machine-p-wheelR-wall",
+        "machine-o-wheelL-neg-veil",
+        "machine-o-wheelL-neg",
+        "machine-o-wheelL-neg-base",
+        "machine-o-wheelL-neg-hole",
+        "machine-o-wheelL-wall",
+        "machine-o-nozzle-pos",
+        "machine-o-nozzle-wall",
+        "machine-o-badge-back",
+        "machine-o-badge-edge-lit",
+        "machine-o-badge-edge",
+        "machine-o-body-f4",
+        "machine-o-body-f2",
+        "machine-o-body-f0",
+        "machine-o-wheelR-neg",
+        "machine-o-wheelR-wall",
+        "machine-n-wheelL-neg-veil",
+        "machine-n-wheelL-neg",
+        "machine-n-wheelL-neg-base",
+        "machine-n-wheelL-neg-hole",
+        "machine-n-wheelL-wall",
+        "machine-n-nozzle-pos",
+        "machine-n-nozzle-wall",
+        "machine-n-body-f4",
+        "machine-n-body-f2",
+        "machine-n-body-f0",
+        "machine-n-badge-back",
+        "machine-n-badge-edge-lit",
+        "machine-n-badge-edge",
+        "machine-n-wheelR-neg",
+        "machine-n-wheelR-wall",
+        "machine-m-nozzle-pos",
+        "machine-m-nozzle-wall",
+        "machine-m-wheelL-neg-veil",
+        "machine-m-wheelL-neg",
+        "machine-m-wheelL-neg-base",
+        "machine-m-wheelL-neg-hole",
+        "machine-m-wheelL-wall",
+        "machine-m-body-f4",
+        "machine-m-body-f2",
+        "machine-m-body-f0",
+        "machine-m-badge-back",
+        "machine-m-badge-edge-lit",
+        "machine-m-badge-edge",
+        "machine-m-wheelR-neg",
+        "machine-m-wheelR-wall",
+        "machine-l-nozzle-pos",
+        "machine-l-nozzle-wall",
+        "machine-l-wheelL-neg-veil",
+        "machine-l-wheelL-neg",
+        "machine-l-wheelL-neg-base",
+        "machine-l-wheelL-neg-hole",
+        "machine-l-wheelL-wall",
+        "machine-l-body-f4",
+        "machine-l-body-f2",
+        "machine-l-body-f0",
+        "machine-l-wheelR-neg",
+        "machine-l-wheelR-wall",
+        "machine-l-badge-back",
+        "machine-l-badge-edge-lit",
+        "machine-l-badge-edge",
+        "machine-k-nozzle-pos",
+        "machine-k-nozzle-wall",
+        "machine-k-body-f4",
+        "machine-k-body-f2",
+        "machine-k-body-f0",
+        "machine-k-wheelL-neg-veil",
+        "machine-k-wheelL-neg",
+        "machine-k-wheelL-neg-base",
+        "machine-k-wheelL-neg-hole",
+        "machine-k-wheelL-wall",
+        "machine-k-wheelR-neg",
+        "machine-k-wheelR-wall",
+        "machine-k-badge-back",
+        "machine-k-badge-edge-lit",
+        "machine-k-badge-edge",
+        "machine-j-nozzle-pos",
+        "machine-j-nozzle-wall",
+        "machine-j-body-f5",
+        "machine-j-body-f2",
+        "machine-j-body-f0",
+        "machine-j-wheelR-pos-veil",
+        "machine-j-wheelR-pos",
+        "machine-j-wheelR-pos-base",
+        "machine-j-wheelR-pos-hole",
+        "machine-j-wheelR-wall",
+        "machine-j-wheelL-pos",
+        "machine-j-wheelL-wall",
+        "machine-j-badge-back",
+        "machine-j-badge-edge-lit",
+        "machine-j-badge-edge",
+        "machine-i-nozzle-pos",
+        "machine-i-nozzle-wall",
+        "machine-i-wheelR-pos-veil",
+        "machine-i-wheelR-pos",
+        "machine-i-wheelR-pos-base",
+        "machine-i-wheelR-pos-hole",
+        "machine-i-wheelR-wall",
+        "machine-i-body-f5",
+        "machine-i-body-f2",
+        "machine-i-body-f0",
+        "machine-i-wheelL-pos",
+        "machine-i-wheelL-wall",
+        "machine-i-badge-back",
+        "machine-i-badge-edge-lit",
+        "machine-i-badge-edge",
+        "machine-h-nozzle-pos",
+        "machine-h-nozzle-wall",
+        "machine-h-wheelR-pos-veil",
+        "machine-h-wheelR-pos",
+        "machine-h-wheelR-pos-base",
+        "machine-h-wheelR-pos-hole",
+        "machine-h-wheelR-wall",
+        "machine-h-body-f5",
+        "machine-h-body-f2",
+        "machine-h-body-f0",
+        "machine-h-badge-back",
+        "machine-h-badge-edge-lit",
+        "machine-h-badge-edge",
+        "machine-h-wheelL-pos",
+        "machine-h-wheelL-wall",
+        "machine-g-wheelR-pos-veil",
+        "machine-g-wheelR-pos",
+        "machine-g-wheelR-pos-base",
+        "machine-g-wheelR-pos-hole",
+        "machine-g-wheelR-wall",
+        "machine-g-nozzle-pos",
+        "machine-g-nozzle-wall",
+        "machine-g-body-f5",
+        "machine-g-body-f2",
+        "machine-g-body-f0",
+        "machine-g-badge-back",
+        "machine-g-badge-edge-lit",
+        "machine-g-badge-edge",
+        "machine-g-wheelL-pos",
+        "machine-g-wheelL-wall",
+        "machine-f-wheelR-pos-veil",
+        "machine-f-wheelR-pos",
+        "machine-f-wheelR-pos-base",
+        "machine-f-wheelR-pos-hole",
+        "machine-f-wheelR-wall",
+        "machine-f-body-f5",
+        "machine-f-body-f2",
+        "machine-f-body-f1",
+        "machine-f-nozzle-neg",
+        "machine-f-nozzle-wall",
+        "machine-f-badge-front",
+        "machine-f-badge-edge-lit",
+        "machine-f-badge-edge",
+        "machine-f-wheelL-pos",
+        "machine-f-wheelL-wall",
+        "machine-e-wheelR-pos-veil",
+        "machine-e-wheelR-pos",
+        "machine-e-wheelR-pos-base",
+        "machine-e-wheelR-pos-hole",
+        "machine-e-wheelR-wall",
+        "machine-e-body-f5",
+        "machine-e-body-f2",
+        "machine-e-body-f1",
+        "machine-e-badge-front",
+        "machine-e-badge-edge-lit",
+        "machine-e-badge-edge",
+        "machine-e-nozzle-neg",
+        "machine-e-nozzle-wall",
+        "machine-e-wheelL-pos",
+        "machine-e-wheelL-wall",
+        "machine-d-wheelR-pos-veil",
+        "machine-d-wheelR-pos",
+        "machine-d-wheelR-pos-base",
+        "machine-d-wheelR-pos-hole",
+        "machine-d-wheelR-wall",
+        "machine-d-badge-front",
+        "machine-d-badge-edge-lit",
+        "machine-d-badge-edge",
+        "machine-d-body-f5",
+        "machine-d-body-f2",
+        "machine-d-body-f1",
+        "machine-d-nozzle-neg",
+        "machine-d-nozzle-wall",
+        "machine-d-wheelL-pos",
+        "machine-d-wheelL-wall",
+        "machine-c-badge-front",
+        "machine-c-badge-edge-lit",
+        "machine-c-badge-edge",
+        "machine-c-wheelR-pos-veil",
+        "machine-c-wheelR-pos",
+        "machine-c-wheelR-pos-base",
+        "machine-c-wheelR-pos-hole",
+        "machine-c-wheelR-wall",
+        "machine-c-body-f5",
+        "machine-c-body-f2",
+        "machine-c-body-f1",
+        "machine-c-nozzle-neg",
+        "machine-c-nozzle-wall",
+        "machine-c-wheelL-pos",
+        "machine-c-wheelL-wall",
+        "machine-b-badge-front",
+        "machine-b-badge-edge-lit",
+        "machine-b-badge-edge",
+        "machine-b-wheelR-pos-veil",
+        "machine-b-wheelR-pos",
+        "machine-b-wheelR-pos-base",
+        "machine-b-wheelR-pos-hole",
+        "machine-b-wheelR-wall",
+        "machine-b-body-f5",
+        "machine-b-body-f2",
+        "machine-b-body-f1",
+        "machine-b-wheelL-pos",
+        "machine-b-wheelL-wall",
+        "machine-b-nozzle-neg",
+        "machine-b-nozzle-wall",
+        "machine-a-badge-front",
+        "machine-a-badge-edge-lit",
+        "machine-a-badge-edge",
+        "machine-a-body-f5",
+        "machine-a-body-f2",
+        "machine-a-body-f1",
+        "machine-a-wheelR-pos-veil",
+        "machine-a-wheelR-pos",
+        "machine-a-wheelR-pos-base",
+        "machine-a-wheelR-pos-hole",
+        "machine-a-wheelR-wall",
+        "machine-a-wheelL-pos",
+        "machine-a-wheelL-wall",
+        "machine-a-nozzle-neg",
+        "machine-a-nozzle-wall",
+        "pyramid-pyr-f4",
+        "pyramid-pyr-f3",
+        "pyramid-pyr-f2",
+        "pyramid-pyr-f1"
+      ],
+      "filters": [],
+      "defsXml": "<defs><radialGradient id=\"machine-u-button-highlight-grad\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"#fff7ed\"/><stop offset=\"55%\" stop-color=\"#fff7ed\" stop-opacity=\".38\"/><stop offset=\"100%\" stop-color=\"#fff7ed\" stop-opacity=\"0\"/></radialGradient></defs>\n<defs><radialGradient id=\"machine-v-button-highlight-grad\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"#fff7ed\"/><stop offset=\"55%\" stop-color=\"#fff7ed\" stop-opacity=\".38\"/><stop offset=\"100%\" stop-color=\"#fff7ed\" stop-opacity=\"0\"/></radialGradient></defs>\n<defs><radialGradient id=\"machine-w-button-highlight-grad\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"#fff7ed\"/><stop offset=\"55%\" stop-color=\"#fff7ed\" stop-opacity=\".38\"/><stop offset=\"100%\" stop-color=\"#fff7ed\" stop-opacity=\"0\"/></radialGradient></defs>\n<defs><radialGradient id=\"machine-x-button-highlight-grad\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"#fff7ed\"/><stop offset=\"55%\" stop-color=\"#fff7ed\" stop-opacity=\".38\"/><stop offset=\"100%\" stop-color=\"#fff7ed\" stop-opacity=\"0\"/></radialGradient></defs>\n<defs><radialGradient id=\"machine-y-button-highlight-grad\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"#fff7ed\"/><stop offset=\"55%\" stop-color=\"#fff7ed\" stop-opacity=\".38\"/><stop offset=\"100%\" stop-color=\"#fff7ed\" stop-opacity=\"0\"/></radialGradient></defs>\n<defs><radialGradient id=\"machine-z-button-highlight-grad\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"#fff7ed\"/><stop offset=\"55%\" stop-color=\"#fff7ed\" stop-opacity=\".38\"/><stop offset=\"100%\" stop-color=\"#fff7ed\" stop-opacity=\"0\"/></radialGradient></defs>"
+    }
+  ],
+  "primitives": [
+    {
+      "kind": "turntable",
+      "id": "pyramid",
+      "origin": [
+        185,
+        240
+      ],
+      "tilt": 20,
+      "angle": [
+        {
+          "t": 0,
+          "deg": 0
+        },
+        {
+          "t": 180,
+          "deg": 360
+        }
+      ],
+      "parts": [
+        {
+          "type": "poly",
+          "name": "pyr",
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "vertices": [
+            [
+              -58,
+              42,
+              -58
+            ],
+            [
+              58,
+              42,
+              -58
+            ],
+            [
+              58,
+              42,
+              58
+            ],
+            [
+              -58,
+              42,
+              58
+            ],
+            [
+              0,
+              -84,
+              0
+            ]
+          ],
+          "faces": [
+            [
+              0,
+              1,
+              2,
+              3
+            ],
+            [
+              0,
+              1,
+              4
+            ],
+            [
+              1,
+              2,
+              4
+            ],
+            [
+              2,
+              3,
+              4
+            ],
+            [
+              3,
+              0,
+              4
+            ]
+          ],
+          "paint": [
+            "#B45309",
+            "#F59E0B",
+            "#FBBF24",
+            "#EA580C",
+            "#FB923C"
+          ],
+          "shade": "#78350F"
+        }
+      ]
+    },
+    {
+      "kind": "turntable",
+      "id": "machine",
+      "origin": [
+        540,
+        245
+      ],
+      "tilt": 22,
+      "focal": 1100,
+      "lightDir": [
+        -0.55,
+        -0.5,
+        0.67
+      ],
+      "angle": [
+        {
+          "t": 0,
+          "deg": 0
+        },
+        {
+          "t": 180,
+          "deg": 360
+        }
+      ],
+      "parts": [
+        {
+          "type": "poly",
+          "name": "body",
+          "center": [
+            0,
+            8,
+            0
+          ],
+          "vertices": [
+            [
+              -75,
+              -48,
+              -43
+            ],
+            [
+              75,
+              -48,
+              -43
+            ],
+            [
+              75,
+              48,
+              -43
+            ],
+            [
+              -75,
+              48,
+              -43
+            ],
+            [
+              -75,
+              -48,
+              43
+            ],
+            [
+              75,
+              -48,
+              43
+            ],
+            [
+              75,
+              48,
+              43
+            ],
+            [
+              -75,
+              48,
+              43
+            ]
+          ],
+          "faces": [
+            [
+              0,
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6,
+              7
+            ],
+            [
+              0,
+              1,
+              5,
+              4
+            ],
+            [
+              3,
+              2,
+              6,
+              7
+            ],
+            [
+              0,
+              3,
+              7,
+              4
+            ],
+            [
+              1,
+              2,
+              6,
+              5
+            ]
+          ],
+          "paint": [
+            "#334155",
+            "#475569",
+            "#64748B",
+            "#1E293B",
+            "#3B4B66",
+            "#3B4B66"
+          ],
+          "shade": "#162032",
+          "stack": 0
+        },
+        {
+          "type": "lathe",
+          "name": "wheelL",
+          "center": [
+            -89,
+            28,
+            0
+          ],
+          "profile": [
+            [
+              -13,
+              24
+            ],
+            [
+              -10,
+              32
+            ],
+            [
+              10,
+              32
+            ],
+            [
+              13,
+              24
+            ]
+          ],
+          "side": "#1E293B",
+          "ends": {
+            "neg": {
+              "paint": "#94A3B8",
+              "recess": {
+                "radius": 13,
+                "depth": 7,
+                "wall": "#334155",
+                "base": "#0F172A"
+              }
+            },
+            "pos": {
+              "paint": "#475569"
+            }
+          },
+          "stack": 0
+        },
+        {
+          "type": "lathe",
+          "name": "wheelR",
+          "center": [
+            89,
+            28,
+            0
+          ],
+          "profile": [
+            [
+              -13,
+              24
+            ],
+            [
+              -10,
+              32
+            ],
+            [
+              10,
+              32
+            ],
+            [
+              13,
+              24
+            ]
+          ],
+          "side": "#1E293B",
+          "ends": {
+            "pos": {
+              "paint": "#94A3B8",
+              "recess": {
+                "radius": 13,
+                "depth": 7,
+                "wall": "#334155",
+                "base": "#0F172A"
+              }
+            },
+            "neg": {
+              "paint": "#475569"
+            }
+          },
+          "stack": 0
+        },
+        {
+          "type": "extrude",
+          "name": "badge",
+          "center": [
+            -8,
+            8,
+            51
+          ],
+          "depth": 14,
+          "outline": "M -38 -24 L 24 -24 A 14 14 0 0 1 38 -10 L 38 10 A 14 14 0 0 1 24 24 L -38 24 Z M -22 -11 L -22 11 L 4 11 A 11 11 0 0 0 4 -11 Z",
+          "face": "#E2E8F0",
+          "edge": "#475569",
+          "edgeLit": "#94A3B8",
+          "edgeLitOpacity": 55,
+          "stack": 0
+        },
+        {
+          "type": "lathe",
+          "name": "nozzle",
+          "center": [
+            0,
+            8,
+            -56
+          ],
+          "rotation": [
+            0,
+            90,
+            0
+          ],
+          "profile": [
+            [
+              -12,
+              26
+            ],
+            [
+              12,
+              12
+            ]
+          ],
+          "side": "#6366F1",
+          "ends": {
+            "pos": {
+              "paint": "#A5B4FC"
+            },
+            "neg": {
+              "paint": "#3730A3"
+            }
+          },
+          "stack": 0
+        },
+        {
+          "type": "lathe",
+          "name": "knobL",
+          "center": [
+            -38,
+            -53,
+            -20
+          ],
+          "rotation": [
+            0,
+            0,
+            -90
+          ],
+          "profile": [
+            [
+              -12,
+              18
+            ],
+            [
+              12,
+              13
+            ]
+          ],
+          "side": "#0EA5E9",
+          "ends": {
+            "pos": {
+              "paint": "#7DD3FC"
+            },
+            "neg": {
+              "paint": "#0369A1"
+            }
+          },
+          "stack": 1
+        },
+        {
+          "type": "lathe",
+          "name": "dial",
+          "center": [
+            -38,
+            -53,
+            20
+          ],
+          "rotation": [
+            0,
+            0,
+            -90
+          ],
+          "profile": [
+            [
+              -12,
+              15
+            ],
+            [
+              12,
+              18
+            ]
+          ],
+          "innerProfile": [
+            [
+              -7,
+              10
+            ],
+            [
+              12,
+              13
+            ]
+          ],
+          "side": "#14B8A6",
+          "innerPaint": "#0F766E",
+          "innerBase": "#115E59",
+          "ends": {
+            "pos": {
+              "paint": "#5EEAD4"
+            },
+            "neg": {
+              "paint": "#0F766E"
+            }
+          },
+          "stack": 1
+        },
+        {
+          "type": "sphere",
+          "name": "button",
+          "center": [
+            36,
+            -61,
+            4
+          ],
+          "radius": 20,
+          "paint": "#F97316",
+          "shade": "#9A3412",
+          "highlight": "#FFF7ED",
+          "highlightOpacity": 62,
+          "stack": 1
+        }
+      ]
+    }
+  ],
+  "patches": [],
+  "createdAt": "2026-11-22T17:32:04.476Z",
+  "updatedAt": "2026-11-22T17:32:05.935Z"
+}

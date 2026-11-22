@@ -152,7 +152,8 @@ addEventListener('message', (e) => {
   syncLottieChrome();
   frameEl.style.width = st.w + 'px'; frameEl.style.height = st.h + 'px';
   fit(); if (!st.zoomed) fitDefault(); seek(Math.min(st.frame, st.frames - 1), true); loadNotes();
-  if (st.isLottie) loadLottieHealth(); else loadExportSizes();
+  if (st.isLottie) loadLottieHealth();
+  loadExportSizes();
 });
 
 function fit() {
@@ -1706,15 +1707,50 @@ function onGlobalKeyDown(e) {
 addEventListener('keydown', onGlobalKeyDown);
 
 // ------------------------------------------------------------------ Lottie Studio chrome
+function lottieFxDims(res) {
+  const sw = st.S?.width || 512, sh = st.S?.height || 512;
+  const base = Math.max(1, sw, sh);
+  const r = Math.max(100, Number(res) || base);
+  return { w: Math.round((sw * r) / base), h: Math.round((sh * r) / base), res: r };
+}
+
+function updateLottieFxLabel(bakedBytes) {
+  const slider = $('#lottieFxSlider'), lbl = $('#lottieFxLbl');
+  if (!slider || !lbl) return;
+  const { w, h } = lottieFxDims(slider.value);
+  const kb = bakedBytes > 0 ? ` · ${Math.max(1, Math.round(bakedBytes / 1024))} KB` : '';
+  lbl.textContent = `${w}×${h}${kb}`;
+}
+
 function syncLottieChrome() {
   const on = !!st.isLottie;
-  $('#exportGroup').hidden = on;
+  const hasFx = on && (st.S?.filtersCount || 0) > 0;
+  $('#exportGroup').hidden = false;
   $('#lottieExportGroup').hidden = !on;
   $('#lottieHealth').hidden = !on;
   $('#bgBtn').hidden = !on;
-  $('#fxPreviewBtn').hidden = !(on && (st.S?.filtersCount || 0) > 0);
+  $('#fxPreviewBtn').hidden = !hasFx;
+  $('#lottieFxSize').hidden = !hasFx;
+  $('#lottieRasterFmt').hidden = !hasFx;
   $('#cacheBar').style.display = on ? 'none' : 'block';
   if (on) {
+    const sw = st.S?.width || 512, sh = st.S?.height || 512;
+    const base = Math.max(sw, sh);
+    const slider = $('#lottieFxSlider');
+    if (slider && slider.dataset.scene !== st.scene) {
+      slider.dataset.scene = st.scene;
+      slider.min = String(Math.max(80, Math.round((base * 0.2) / 10) * 10));
+      slider.max = String(Math.max(1000, Math.round((base * 3) / 100) * 100));
+      slider.step = '10';
+      slider.value = String(Math.round(base / 10) * 10);
+    }
+    st.previewMode = st.S?.previewMode?.() || 'live';
+    const fxBtn = $('#fxPreviewBtn');
+    if (fxBtn) {
+      fxBtn.classList.toggle('on', st.previewMode === 'baked');
+      fxBtn.innerHTML = st.previewMode === 'baked' ? '<span>▣</span>Baked' : '<span>◎</span>FX';
+    }
+    updateLottieFxLabel(0);
     $('#fpsBadge').hidden = true;
     const b = $('#lottieExportBtn');
     if (b && b.dataset.scene !== st.scene) {
@@ -1753,22 +1789,29 @@ $('#bgBtn').onclick = () => {
   $('#bgBtn').title = `Canvas backdrop: ${st.backdrop} (click to cycle)`;
 };
 
-$('#fxPreviewBtn').onclick = async () => {
+async function applyPreviewMode(next) {
   if (!st.S?.setPreviewMode) return;
   const btn = $('#fxPreviewBtn');
-  const next = st.previewMode === 'live' ? 'baked' : 'live';
+  const fxRes = $('#lottieFxSlider')?.value || '510';
+  const rasterFmt = $('#lottieRasterFmt')?.value || 'png';
   btn.disabled = true;
+  if (next === 'baked') btn.innerHTML = '<span>…</span>Baking';
   try {
-    await st.S.setPreviewMode(next);
+    const info = await st.S.setPreviewMode(next, { fxRes, rasterFmt });
     st.previewMode = next;
     btn.classList.toggle('on', next === 'baked');
     btn.innerHTML = next === 'baked' ? '<span>▣</span>Baked' : '<span>◎</span>FX';
+    updateLottieFxLabel(next === 'baked' ? (info?.bakedBytes || 0) : 0);
   } catch (err) {
+    btn.classList.toggle('on', st.previewMode === 'baked');
+    btn.innerHTML = st.previewMode === 'baked' ? '<span>▣</span>Baked' : '<span>◎</span>FX';
     alert(err.message);
   } finally {
     btn.disabled = false;
   }
-};
+}
+
+$('#fxPreviewBtn').onclick = () => applyPreviewMode(st.previewMode === 'live' ? 'baked' : 'live');
 
 $('#lottieExportBtn').onclick = async () => {
   const btn = $('#lottieExportBtn'), jsonLink = $('#lottieDownloadJson');
@@ -1779,9 +1822,9 @@ $('#lottieExportBtn').onclick = async () => {
   btn.disabled = true;
   btn.textContent = 'Baking FX & packaging…';
   try {
-    const scale = $('#lottieScale').value || '2';
+    const fxRes = $('#lottieFxSlider')?.value || '510';
     const rasterFmt = $('#lottieRasterFmt').value || 'png';
-    const res = await fetch(`/api/lottie/export?scene=${encodeURIComponent(st.scene)}&scale=${scale}&rasterFmt=${rasterFmt}`, { method: 'POST' });
+    const res = await fetch(`/api/lottie/export?scene=${encodeURIComponent(st.scene)}&fxRes=${fxRes}&rasterFmt=${rasterFmt}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Lottie export failed');
     const kb = Math.max(1, Math.round((data.dotLottieBytes || 0) / 1024));
@@ -1802,10 +1845,22 @@ $('#lottieExportBtn').onclick = async () => {
     btn.disabled = false;
   }
 };
-$('#lottieScale').onchange = $('#lottieRasterFmt').onchange = () => {
+const resetLottieExport = () => {
   const btn = $('#lottieExportBtn');
   delete btn.dataset.file; btn.classList.remove('on'); btn.textContent = '⤓ Export .lottie';
   $('#lottieDownloadJson').hidden = true;
+};
+$('#lottieFxSlider').oninput = () => {
+  updateLottieFxLabel(0);
+  resetLottieExport();
+};
+$('#lottieFxSlider').onchange = () => {
+  resetLottieExport();
+  if (st.previewMode === 'baked') applyPreviewMode('baked');
+};
+$('#lottieRasterFmt').onchange = () => {
+  resetLottieExport();
+  if (st.previewMode === 'baked') applyPreviewMode('baked');
 };
 
 init();

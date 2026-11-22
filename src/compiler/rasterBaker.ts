@@ -105,14 +105,16 @@ async function rasterizeSvgNode(
   svg: string,
   logicalW: number,
   logicalH: number,
-  scale: number,
+  renderScale: number,
+  pixelW: number,
+  pixelH: number,
   format: 'png' | 'webp',
   quality: number,
   cacheDir?: string,
 ): Promise<Buffer> {
   const hash = crypto
     .createHash('sha256')
-    .update(`${svg}|${logicalW}x${logicalH}@${scale}|${format}|${quality}`)
+    .update(`${svg}|${logicalW}x${logicalH}@${renderScale}->${pixelW}x${pixelH}|${format}|${quality}`)
     .digest('hex')
     .slice(0, 16);
   const cacheFile = cacheDir ? path.join(cacheDir, `${hash}.${format}`) : undefined;
@@ -125,11 +127,19 @@ async function rasterizeSvgNode(
     }
   }
 
+  const needsResize = pixelW !== Math.round(logicalW * renderScale) || pixelH !== Math.round(logicalH * renderScale);
+  const renderFormat = needsResize ? 'png' : format;
   let buf: Buffer;
   try {
-    buf = await rasterizeWithPlaywright(svg, logicalW, logicalH, scale, format, quality);
+    buf = await rasterizeWithPlaywright(svg, logicalW, logicalH, renderScale, renderFormat, quality);
   } catch {
-    buf = await rasterizeWithSharp(svg, logicalW, logicalH, scale, format, quality);
+    buf = await rasterizeWithSharp(svg, logicalW, logicalH, renderScale, renderFormat, quality);
+  }
+
+  if (needsResize) {
+    const sharpMod = await import('sharp');
+    const resized = sharpMod.default(buf).resize(pixelW, pixelH, { kernel: 'lanczos3' });
+    buf = await (format === 'webp' ? resized.webp({ quality }) : resized.png({ compressionLevel: 9 })).toBuffer();
   }
 
   if (cacheFile) {
@@ -141,17 +151,18 @@ async function rasterizeSvgNode(
 
 function scaleLottieScaleProp(
   prop: LottieProp<number[]> | undefined,
-  invScale: number,
+  invScaleX: number,
+  invScaleY: number = invScaleX,
 ): LottieProp<number[]> {
   if (!prop) {
-    return { a: 0, k: [round4(100 * invScale), round4(100 * invScale), 100] };
+    return { a: 0, k: [round4(100 * invScaleX), round4(100 * invScaleY), 100] };
   }
   if (prop.a === 0) {
     return {
       a: 0,
       k: [
-        round4((prop.k[0] ?? 100) * invScale),
-        round4((prop.k[1] ?? 100) * invScale),
+        round4((prop.k[0] ?? 100) * invScaleX),
+        round4((prop.k[1] ?? 100) * invScaleY),
         prop.k[2] ?? 100,
       ],
     };
@@ -161,15 +172,15 @@ function scaleLottieScaleProp(
     k: prop.k.map((kf) => ({
       ...kf,
       s: [
-        round4((kf.s[0] ?? 100) * invScale),
-        round4((kf.s[1] ?? 100) * invScale),
+        round4((kf.s[0] ?? 100) * invScaleX),
+        round4((kf.s[1] ?? 100) * invScaleY),
         kf.s[2] ?? 100,
       ],
       ...(kf.e
         ? {
             e: [
-              round4((kf.e[0] ?? 100) * invScale),
-              round4((kf.e[1] ?? 100) * invScale),
+              round4((kf.e[0] ?? 100) * invScaleX),
+              round4((kf.e[1] ?? 100) * invScaleY),
               kf.e[2] ?? 100,
             ],
           }
@@ -203,7 +214,8 @@ export async function bakeFilteredLayers(
     return { doc, baked: [] };
   }
 
-  const scale = opts.scale ?? 2;
+  const scale = Math.max(0.125, Math.min(3, opts.scale ?? 2));
+  const renderScale = Math.max(1, Math.min(3, Math.ceil(scale)));
   const format = opts.format ?? 'png';
   const quality = opts.quality ?? 90;
   const filterByLayer = new Map<string, SvgFilterDescriptor>();
@@ -223,13 +235,15 @@ export async function bakeFilteredLayers(
     }
 
     const { svg, originX, originY, logicalW, logicalH } = buildIsolatedSvg(filter, defsXml);
-    const pixelW = Math.round(logicalW * scale);
-    const pixelH = Math.round(logicalH * scale);
+    const pixelW = Math.max(4, Math.round(logicalW * scale));
+    const pixelH = Math.max(4, Math.round(logicalH * scale));
     const imgBuf = await rasterizeSvgNode(
       svg,
       logicalW,
       logicalH,
-      scale,
+      renderScale,
+      pixelW,
+      pixelH,
       format,
       quality,
       opts.cacheDir,
@@ -250,9 +264,12 @@ export async function bakeFilteredLayers(
     doc.assets = [...doc.assets.filter((a) => a.id !== assetId), asset];
 
     const [ax, ay] = getLayerAnchor(layer);
-    const newAnchorX = round2((ax - originX) * scale);
-    const newAnchorY = round2((ay - originY) * scale);
-    const invScale = 1 / scale;
+    const actualScaleX = pixelW / logicalW;
+    const actualScaleY = pixelH / logicalH;
+    const newAnchorX = round2((ax - originX) * actualScaleX);
+    const newAnchorY = round2((ay - originY) * actualScaleY);
+    const invScaleX = 1 / actualScaleX;
+    const invScaleY = 1 / actualScaleY;
 
     const imgLayer: LottieImageLayer = {
       ddd: 0,
@@ -266,7 +283,7 @@ export async function bakeFilteredLayers(
       ks: {
         ...layer.ks,
         a: { a: 0, k: [newAnchorX, newAnchorY, 0] },
-        s: scaleLottieScaleProp(layer.ks.s, invScale),
+        s: scaleLottieScaleProp(layer.ks.s, invScaleX, invScaleY),
       },
       ao: layer.ao,
       ip: layer.ip,

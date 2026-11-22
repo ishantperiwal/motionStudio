@@ -439,21 +439,46 @@ export function startServer({ port = 5173, watch = true, quiet = false } = {}) {
       if (p === '/api/lottie/preview-baked' && req.method === 'GET') {
         const scene = safeId(url.searchParams.get('scene'));
         if (!scene || !isLottieScene(scene)) return send(res, 404, { error: 'not a Lottie composition' });
-        const scale = Math.min(3, Math.max(1, Math.round(+url.searchParams.get('scale') || 2)));
+        const format = url.searchParams.get('rasterFmt') === 'webp' ? 'webp' : 'png';
         const { CompositionManager, bakeFilteredLayers } = await getCompiler();
         const mgr = new CompositionManager(PROJECT, ROOT);
-        const compiled = await mgr.compile(scene);
+        // Read already-compiled animation.json + filters.json directly (read-only: avoids writing to scenes/
+        // which would trigger the dev file watcher and reload the iframe right back into live mode!).
+        const animPath = path.join(PROJECT, 'scenes', scene, 'animation.json');
+        const filtersPath = path.join(PROJECT, 'scenes', scene, 'filters.json');
+        let doc, filters, defsXml;
+        if (fs.existsSync(animPath)) {
+          doc = await readJSON(animPath, null);
+          const meta = await readJSON(filtersPath, { defsXml: '', filters: [] });
+          filters = meta?.filters || [];
+          defsXml = meta?.defsXml || '';
+        } else {
+          const compiled = await mgr.compile(scene);
+          ({ doc, filters, defsXml } = compiled);
+        }
+        const fxRes = Number(url.searchParams.get('fxRes'));
+        const baseDim = Math.max(1, doc?.w || 512, doc?.h || 512);
+        const scale = Number.isFinite(fxRes) && fxRes > 0
+          ? Math.max(0.125, Math.min(3, fxRes / baseDim))
+          : Math.max(0.125, Math.min(3, Number(url.searchParams.get('scale')) || 2));
         const cacheDir = path.join(PROJECT, 'out', '.raster-cache');
-        const baked = await bakeFilteredLayers(compiled.doc, compiled.filters, compiled.defsXml, { scale, format: 'png', cacheDir });
-        return send(res, 200, { doc: baked.doc, bakedCount: baked.baked.length });
+        const baked = await bakeFilteredLayers(doc, filters, defsXml, { scale, format, cacheDir });
+        const bakedBytes = baked.baked.reduce((sum, b) => sum + (b.bytes || 0), 0);
+        return send(res, 200, { doc: baked.doc, bakedCount: baked.baked.length, bakedBytes, scale });
       }
       if (p === '/api/lottie/export' && req.method === 'POST') {
         const scene = safeId(url.searchParams.get('scene'));
         if (!scene || !isLottieScene(scene)) return send(res, 404, { error: 'not a Lottie composition' });
-        const scale = Math.min(3, Math.max(1, Math.round(+url.searchParams.get('scale') || 2)));
         const format = url.searchParams.get('rasterFmt') === 'webp' ? 'webp' : 'png';
         const { CompositionManager } = await getCompiler();
         const mgr = new CompositionManager(PROJECT, ROOT);
+        const fxRes = Number(url.searchParams.get('fxRes'));
+        let scale = Math.max(0.125, Math.min(3, Number(url.searchParams.get('scale')) || 2));
+        if (Number.isFinite(fxRes) && fxRes > 0) {
+          const spec = await mgr.readSpec(scene);
+          const baseDim = Math.max(1, spec?.width || 512, spec?.height || 512);
+          scale = Math.max(0.125, Math.min(3, fxRes / baseDim));
+        }
         const resExport = await mgr.exportDotLottie(scene, { scale, format });
         return send(res, 200, {
           ok: true,

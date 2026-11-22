@@ -255,6 +255,8 @@ export interface CloseupResult {
   height: number;
   /** the shared crop, in composition px */
   crop: { x: number; y: number; w: number; h: number };
+  /** each frame cropped (PNG), in `frames` order */
+  tiles: Buffer[];
 }
 
 /**
@@ -325,10 +327,12 @@ export async function renderLottieCloseups(opts: CloseupOptions): Promise<Closeu
         `<text x="8" y="17" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">f${f}</text></svg>`,
     );
   const composites: Array<{ input: Buffer; left: number; top: number }> = [];
+  const tiles: Buffer[] = [];
   for (const [idx, shot] of shots.entries()) {
     const x = pad + (idx % cols) * (tileW + pad);
     const y = pad + Math.floor(idx / cols) * (tileH + pad);
-    composites.push({ input: await sharp(shot).extract({ left, top, width: tileW, height: tileH }).toBuffer(), left: x, top: y });
+    tiles.push(await sharp(shot).extract({ left, top, width: tileW, height: tileH }).png().toBuffer());
+    composites.push({ input: tiles[idx]!, left: x, top: y });
     composites.push({ input: label(frames[idx]!), left: x + 6, top: y + 6 });
   }
   await fs.mkdir(path.dirname(opts.outPath), { recursive: true });
@@ -343,5 +347,6 @@ export async function renderLottieCloseups(opts: CloseupOptions): Promise<Closeu
     width: sheetW,
     height: sheetH,
     crop: { x: left / scale, y: top / scale, w: tileW / scale, h: tileH / scale },
+    tiles,
   };
 }

@@ -13,6 +13,12 @@ import {
   normalizeSvgToLottieLayers,
   patchLayerInLast,
   roundTripThroughRelottie,
+  turntableSvg,
+  turntablePose,
+  polyBox,
+  polyPyramid,
+  sampleLottieProp,
+  __internals as turntableInternals,
 } from '../dist/compiler/index.js';
 import { hitTestLottieAtFrame } from '../dist/mcp/hitTest.js';
 
@@ -506,4 +512,309 @@ test('Anti-bake health uses keyframe density: clean multi-act layer passes, bake
   ];
   const burstHealth = inspectLottieHealth(makeDoc(hiddenBurst, 600), []);
   assert.equal(burstHealth.antiBakePass, false, 'Baked burst inside long track must still fail anti-bake');
+});
+
+test('Turntable kit compiles a 3D model (strip + discs) into exact, phase-swapped, mobile-safe native layers', async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-turntable-test-'));
+  try {
+    const cup = (name, x) => ({
+      type: 'disc', name, center: [x, 34, 0], radius: 41, depth: 36, rim: 5, stack: 1, side: '#3730A3',
+      outer: { name: 'shell', paint: '#6366F1' },
+      inner: { name: 'cushion', paint: '#4A407A', recess: { radius: 22, depth: 12, wall: '#251F42', base: '#110D1F' } },
+    });
+    const spec = {
+      kind: 'turntable',
+      id: 'hp',
+      origin: [256, 252],
+      angle: [{ t: 0, deg: 0 }, { t: 96, deg: 360 }],
+      focal: 900,
+      parts: [
+        {
+          type: 'strip', name: 'band', depth: 26, face: '#818CF8', edge: '#2B2775', edgeLit: '#5B5FE6',
+          outline: 'M -98 5 L -98 0 A 98 98 0 0 1 98 0 L 98 5 L 78 5 L 78 0 A 78 78 0 0 0 -78 0 L -78 5 Z',
+        },
+        cup('left', -88),
+        cup('right', 88),
+      ],
+    };
+    const layers = turntableSvg(spec);
+    const ids = [...layers.matchAll(/<g id="([^"]+)"/g)].map((m) => m[1]);
+    // the band (under both cups in every phase) is drawn once; the cups come in two phase sets
+    assert.deepEqual(ids.slice(0, 4), ['hp-band-edge', 'hp-band-edge-lit', 'hp-band-front', 'hp-band-back']);
+    assert.deepEqual(ids.slice(4, 11), ['hp-a-left-wall', 'hp-a-left-cushion-hole', 'hp-a-left-cushion-base', 'hp-a-left-cushion', 'hp-a-left-cushion-veil', 'hp-a-right-wall', 'hp-a-right-shell']);
+    assert.equal(ids.length, 18);
+
+    const mgr = new CompositionManager(tmpDir, STUDIO_ROOT);
+    await mgr.createComposition({ id: 'tt', width: 512, height: 512, fps: 60, durationFrames: 96 });
+    await mgr.importSvgAsset({ sceneId: 'tt', assetId: 'model', svgContent: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">${layers}\n</svg>` });
+    const { compiled } = await mgr.applyPrimitive('tt', spec);
+    assert.equal(compiled.health.antiBakePass, true, 'turntable tracks stay within the anti-bake density limits');
+    assert.equal(compiled.health.mobileReady, true);
+    const doc = compiled.doc;
+    const layer = (id) => doc.layers.find((l) => l.ln === id);
+    const rig = layer('hp.rig');
+    assert.equal(rig.ty, 3, 'a null rig carries the model');
+    for (const id of ids) assert.equal(layer(id).parent, rig.ind, `${id} hangs from the rig`);
+
+    // band silhouette: one vertex count at every pose; side-on (90°, frame 24) it is the true strip, 26 px wide
+    const band = layer('hp-band-edge').shapes.flatMap(function find(it) { return it.ty === 'gr' ? it.it.flatMap(find) : [it]; }).find((it) => it.ty === 'sh');
+    const kfs = band.ks.k;
+    assert.equal(new Set(kfs.map((k) => k.s[0].v.length)).size, 1, 'band poses morph vertex for vertex');
+    const side = kfs.find((k) => Math.abs(k.t - 24) < 0.01).s[0].v.map((v) => v[0]);
+    assert.ok(Math.abs(Math.max(...side) - Math.min(...side) - 26) < 0.05, `side-on band is 26 px wide, got ${Math.max(...side) - Math.min(...side)}`);
+    // its notch shuts exactly where the sweep reaches the squeezed inner arch: tan φ = 78 / 13
+    const shutT = (Math.atan2(78, 13) / (2 * Math.PI)) * 96;
+    assert.ok(kfs.some((k) => Math.abs(k.t - shutT) < 0.02), 'a pose sits where the notch shuts');
+
+    // phase A (left cup far, right cup near) is shown for the first half-turn and swaps out at 180° (frame 48)
+    const wallA = layer('hp-a-left-wall').ks.o.k;
+    assert.deepEqual(wallA.map((k) => [k.t, k.s[0]]), [[0, 100], [48, 0]]);
+    assert.equal(wallA[0].h, 1, 'phases cut on hold keys');
+    const wallB = layer('hp-b-left-wall').ks.o.k;
+    assert.deepEqual(wallB.map((k) => [k.t, k.s[0]]), [[0, 0], [48, 100]]);
+    // lighting: the shell is fully lit while it faces the camera (sin φ ≥ 0.6) and dark edge-on
+    const shell = layer('hp-a-right-shell').ks.o.k;
+    const litFrom = (Math.asin(0.6) / (2 * Math.PI)) * 96;
+    assert.equal(shell[0].s[0], 0);
+    assert.ok(shell.some((k) => Math.abs(k.t - litFrom) < 0.02 && k.s[0] === 100), 'fully lit from asin(0.6)');
+    // transforms are keyed at quarter turns, not baked
+    const xs = layer('hp-a-right-wall').ks.p.x.k;
+    assert.ok(xs.length <= 4, `right cup x uses quarter-turn keys within its phase, got ${xs.length}`);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('3D engine: polyhedron faces are exact affine layers (rotation, skew, scale), culled and lit; lathes take any axis and tilt', async () => {
+  const { faceTransform, placeArt } = turntableInternals;
+  const pyr = polyPyramid(120, 130);
+  const spec = {
+    kind: 'turntable', id: 'e', origin: [256, 256], tilt: 20,
+    angle: [{ t: 0, deg: 0 }, { t: 120, deg: 360 }],
+    parts: [
+      { type: 'poly', name: 'pyr', center: [-100, 10, 0], ...pyr, paint: '#F59E0B', shade: '#7C2D12' },
+      { type: 'lathe', name: 'cup', center: [100, 0, 0], rotation: [0, 0, 30], radius: 48, depth: 40, rim: 6, side: '#3730A3', ends: { pos: { name: 'shell', paint: '#818CF8' } } },
+    ],
+  };
+  // the decomposition is exact: the art's corners land on the projected vertices at any turn
+  for (const t of [7, 33, 61, 94]) {
+    const pose = turntablePose(spec, t)[0];
+    const pl = { c: pose.center, m: pose.rotation, p: 1 };
+    const stage = (v) => [0, 1].map((i) => spec.origin[i] + pose.center[i] + pose.rotation[i].reduce((s, x, j) => s + x * v[j], 0));
+    for (const face of pyr.faces) {
+      const vs = face.map((i) => pyr.vertices[i]);
+      const c = [0, 1, 2].map((i) => vs.reduce((s, v) => s + v[i], 0) / vs.length);
+      // the same art frame the engine uses: down = y laid into the face, right = down × normal
+      let n = [0, 0, 0];
+      vs.forEach((a, i) => { const b = vs[(i + 1) % vs.length]; n = [n[0] + a[1] * b[2] - a[2] * b[1], n[1] + a[2] * b[0] - a[0] * b[2], n[2] + a[0] * b[1] - a[1] * b[0]]; });
+      const ln = Math.hypot(...n); n = n.map((x) => x / ln);
+      if (n.reduce((s, x, i) => s + x * c[i], 0) < 0) n = n.map((x) => -x);
+      let d = [-n[0] * n[1], 1 - n[1] * n[1], -n[2] * n[1]];
+      if (Math.hypot(...d) < 1e-6) d = n[1] < 0 ? [0, 0, 1] : [0, 0, -1];
+      const ld = Math.hypot(...d); d = d.map((x) => x / ld);
+      const r = [d[1] * n[2] - d[2] * n[1], d[2] * n[0] - d[0] * n[2], d[0] * n[1] - d[1] * n[0]];
+      const v = faceTransform(spec, pl, { c, n, d, r });
+      for (const p of vs) {
+        const q = [0, 1, 2].map((i) => p[i] - c[i]);
+        const got = placeArt(v, [q.reduce((s, x, i) => s + x * r[i], 0), q.reduce((s, x, i) => s + x * d[i], 0)]);
+        const want = stage(p);
+        assert.ok(Math.hypot(got[0] - want[0], got[1] - want[1]) < 1e-6, `face corner off by ${Math.hypot(got[0] - want[0], got[1] - want[1])}`);
+      }
+    }
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-engine-test-'));
+  try {
+    const layers = turntableSvg(spec);
+    const ids = [...layers.matchAll(/<g id="([^"]+)"/g)].map((m) => m[1]);
+    // looked at from above, the pyramid's base is never seen: it gets no layer
+    assert.ok(!ids.some((id) => id.endsWith('-pyr-f0')), 'the hidden base face is culled away entirely');
+    assert.ok(ids.some((id) => id.startsWith('e-a-')) && ids.some((id) => id.startsWith('e-b-')), 'the pyramid and cup swap paint order in two phases');
+    const mgr = new CompositionManager(tmpDir, STUDIO_ROOT);
+    await mgr.createComposition({ id: 'eng', width: 512, height: 512, fps: 60, durationFrames: 120 });
+    await mgr.importSvgAsset({ sceneId: 'eng', assetId: 'model', svgContent: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">${layers}\n</svg>` });
+    const { compiled } = await mgr.applyPrimitive('eng', spec);
+    assert.equal(compiled.health.antiBakePass, true);
+    assert.equal(compiled.health.mobileReady, true);
+    // the keyed transforms stay within ~0.5 px of the true face corners while the face shows
+    const doc = compiled.doc;
+    const face = doc.layers.find((l) => /-pyr-f1$/.test(l.ln) && l.ln.startsWith('e-a-'));
+    assert.ok(face.ks.sk && face.ks.sk.a === 1, 'a sloped face is keyed with skew');
+    const [ax, ay] = face.ks.a.k;
+    const vs = pyr.faces[1].map((i) => pyr.vertices[i]);
+    let worst = 0;
+    for (let t = 1; t < 59; t += 1.5) {
+      if (sampleLottieProp(face.ks.o, t)[0] < 50) continue;
+      const pose = turntablePose(spec, t)[0];
+      const v = [...sampleLottieProp(face.ks.p, t), ...sampleLottieProp(face.ks.r, t), ...sampleLottieProp(face.ks.sk, t), ...sampleLottieProp(face.ks.s, t).slice(0, 2)];
+      // the drawn art's corners, relative to the anchor, from the imported path
+      const sh = face.shapes.flatMap(function find(it) { return it.ty === 'gr' ? it.it.flatMap(find) : [it]; }).find((it) => it.ty === 'sh');
+      const art = sh.ks.k.v.map(([x, y]) => [x - ax, y - ay]);
+      const got = art.map((q) => placeArt(v, q));
+      const want = vs.map((p) => [0, 1].map((i) => spec.origin[i] + pose.center[i] + pose.rotation[i].reduce((s, x, j) => s + x * p[j], 0)));
+      for (const w of want) worst = Math.max(worst, Math.min(...got.map((g) => Math.hypot(g[0] - w[0], g[1] - w[1]))));
+    }
+    assert.ok(worst < 0.8, `keyed face corners within 0.8 px of the truth, got ${worst.toFixed(3)}`);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('3D engine stage 2: extrude (non-symmetric holed outline on tilted axis) fits <= 0.5 px at poses, constant vertices, clean edge-on swap', async () => {
+  const { ExtrudeModel, shapeError } = turntableInternals;
+  const spec = {
+    kind: 'turntable',
+    id: 'ext',
+    origin: [256, 256],
+    axis: [0.18, -1, 0],
+    tilt: 22,
+    angle: [{ t: 0, deg: 0 }, { t: 180, deg: 360 }],
+    parts: [
+      {
+        type: 'extrude',
+        name: 'p',
+        depth: 36,
+        outline:
+          'M -60 -95 L 12 -95 A 55 55 0 0 1 12 15 L -24 15 L -24 95 L -60 95 Z ' +
+          'M -24 -64 L -24 -16 L 10 -16 A 24 24 0 0 0 10 -64 Z',
+        face: '#60A5FA',
+        edge: '#1E3A8A',
+        edgeLit: '#3B82F6',
+      },
+    ],
+  };
+
+  // 1. Pose fit within 0.5 px of exact Minkowski-sum silhouette across sampled orientations
+  const model = new ExtrudeModel(spec.parts[0], spec.origin);
+  for (const f of [0, 15, 30, 47, 75, 110, 137, 165]) {
+    const R = turntablePose(spec, f)[0].rotation;
+    const raw = model.projectRaw(R);
+    const fixed = model.poseContours(R, [null])[0];
+    const err = shapeError(raw.outer, fixed);
+    assert.ok(err <= 0.5, `extrude pose at f${f} must be <= 0.5 px of exact Minkowski silhouette, got ${err.toFixed(3)} px`);
+  }
+
+  // 2. End-to-end compile: constant vertex counts across all poses (outer + hole), clean front/back swap at edge-on, mobile-safe
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-extrude-test-'));
+  try {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">${turntableSvg(spec)}\n</svg>`;
+    const mgr = new CompositionManager(tmpDir, STUDIO_ROOT);
+    await mgr.createComposition({ id: 'ext', width: 512, height: 512, fps: 60, durationFrames: 180 });
+    await mgr.importSvgAsset({ sceneId: 'ext', assetId: 'p', svgContent: svg });
+    const { compiled } = await mgr.applyPrimitive('ext', spec);
+    assert.equal(compiled.health.antiBakePass, true, 'extrude scene passes anti-bake');
+    assert.equal(compiled.health.mobileReady, true, 'extrude scene is mobileReady');
+
+    const findAllSh = (a, out = []) => { for (const x of a || []) { if (x.ty === 'sh') out.push(x); if (x.it) findAllSh(x.it, out); } return out; };
+    const edge = compiled.doc.layers.find((l) => l.ln === 'ext-p-edge');
+    const shs = findAllSh(edge.shapes);
+    assert.equal(shs.length, 2, 'extrude edge layer carries outer + hole contours natively (no merge paths)');
+    for (const sh of shs) {
+      const counts = new Set(sh.ks.k.map((k) => k.s[0].v.length));
+      assert.equal(counts.size, 1, 'extrude contour vertex count is constant across all poses');
+    }
+
+    // Front and back faces never show simultaneously (front > 0 iff m[2][2] > 0; back > 0 iff m[2][2] < 0)
+    const front = compiled.doc.layers.find((l) => l.ln === 'ext-p-front');
+    const back = compiled.doc.layers.find((l) => l.ln === 'ext-p-back');
+    for (let f = 0; f < 180; f += 3) {
+      const fz = turntablePose(spec, f)[0].rotation[2][2];
+      const fo = sampleLottieProp(front.ks.o, f)[0];
+      const bo = sampleLottieProp(back.ks.o, f)[0];
+      if (fz > 0.05) assert.equal(bo, 0, `back must be hidden when front faces camera at f${f}`);
+      if (fz < -0.05) assert.equal(fo, 0, `front must be hidden when back faces camera at f${f}`);
+    }
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('3D engine stage 2: lathe profiles (cone, open cup, curved bottle) fit <= 0.5 px at poses, constant vertices, mobile-safe', async () => {
+  const { LatheProfileModel, shapeError } = turntableInternals;
+  const spec = {
+    kind: 'turntable',
+    id: 'lathe',
+    origin: [400, 260],
+    axis: [0.3, -1, 0],
+    tilt: 26,
+    angle: [{ t: 0, deg: 0 }, { t: 180, deg: 360 }],
+    parts: [
+      { type: 'lathe', name: 'cone', center: [-170, 0, 0], rotation: [0, 0, -90], profile: [[-55, 48], [55, 0]], side: '#6366F1', ends: { neg: { paint: '#4338CA' } } },
+      { type: 'lathe', name: 'cup', center: [0, 0, 0], rotation: [0, 0, -90], profile: [[-34, 38], [34, 48]], innerProfile: [[-24, 32], [34, 42]], side: '#E07A5F', innerPaint: '#8C3B28', innerBase: '#4E1D12', ends: { pos: { paint: '#F4B9A4' }, neg: { paint: '#B55339' } } },
+      { type: 'lathe', name: 'bottle', center: [170, 0, 0], rotation: [0, 0, -90], profile: [[-70, 38], { x: -8, r: 40, out: [24, 0] }, { x: 34, r: 15, in: [-14, 0] }, [70, 15]], side: '#10B981', ends: { pos: { paint: '#6EE7B7' }, neg: { paint: '#047857' } } },
+    ],
+  };
+
+  // 1. Exact envelope fit <= 0.5 px across psi ∈ [0°, 90°] and constant vertex count on all three profiles
+  for (const part of spec.parts) {
+    const m = new LatheProfileModel(part, [0, 0]);
+    const vertCounts = new Set();
+    for (const psi of [0, 10, 25, 45, 65, 80, 90]) {
+      const p = m.pose(psi);
+      vertCounts.add(p.v.length);
+      const poly = m.upperEnvelope(psi);
+      const full = [...poly, ...poly.slice(1, -1).reverse().map(([x, y]) => [x, -y])];
+      const exact = { c: true, v: full, i: full.map(() => [0, 0]), o: full.map(() => [0, 0]) };
+      const err = shapeError(p, exact);
+      assert.ok(err <= 0.5, `lathe "${part.name}" pose at psi=${psi}° must be <= 0.5 px, got ${err.toFixed(3)} px`);
+    }
+    assert.equal(vertCounts.size, 1, `lathe "${part.name}" keeps constant vertex count`);
+  }
+
+  // 2. End-to-end compile: cone apex gets no +x end cap, cup emits inner-wall + inner-base, anti-bake & mobile pass
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-lathe-test-'));
+  try {
+    const layersXml = turntableSvg(spec);
+    assert.ok(!layersXml.includes('cone-pos'), 'cone apex (r = 0) gets no end cap layer');
+    assert.ok(layersXml.includes('cup-pos-inner-wall') && layersXml.includes('cup-pos-inner-base'), 'open cup emits inner-wall and inner-base layers');
+    const mgr = new CompositionManager(tmpDir, STUDIO_ROOT);
+    await mgr.createComposition({ id: 'lt', width: 800, height: 520, fps: 60, durationFrames: 180 });
+    await mgr.importSvgAsset({ sceneId: 'lt', assetId: 'lt', svgContent: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520">${layersXml}\n</svg>` });
+    const { compiled } = await mgr.applyPrimitive('lt', spec);
+    assert.equal(compiled.health.antiBakePass, true);
+    assert.equal(compiled.health.mobileReady, true);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('3D engine stage 2: sphere terminator & highlight, interpenetration warnings, and registered demo mobile health', async () => {
+  const { SphereModel, detectInterpenetrations } = turntableInternals;
+  const spec = {
+    kind: 'turntable',
+    id: 'sp',
+    origin: [320, 240],
+    tilt: 20,
+    lightDir: [-0.55, -0.45, 0.7],
+    angle: [{ t: 0, deg: 0 }, { t: 180, deg: 360 }],
+    parts: [
+      { type: 'poly', name: 'box', center: [-80, 0, 0], ...polyBox(80, 80, 80), paint: '#38BDF8', shade: '#0C4A6E' },
+      { type: 'sphere', name: 'orb', center: [80, 0, 0], radius: 48, paint: '#F97316', shade: '#9A3412' },
+    ],
+  };
+
+  // 1. Sphere terminator always has exactly 4 vertices and matches x = -lz * R at midpoint
+  const sm = new SphereModel(spec.parts[1], [0, 0]);
+  for (const lz of [-1, -0.5, 0, 0.5, 1]) {
+    const p = sm.shadePose(lz);
+    assert.equal(p.v.length, 4, 'sphere terminator always has 4 vertices');
+    assert.ok(Math.abs(p.v[1][0] - -lz * 48) < 1e-6, 'terminator midpoint sits at x = -lz * R');
+  }
+
+  // 2. Interpenetration detection: clean scene -> 0 warnings; overlapping same-stack -> warning; different stacks -> 0 warnings
+  assert.deepEqual(detectInterpenetrations(spec), []);
+  const overlapSpec = { ...spec, parts: [spec.parts[0], { ...spec.parts[1], center: [-30, 0, 0] }] };
+  assert.equal(detectInterpenetrations(overlapSpec).length, 1, 'detects interpenetrating parts on the same stack');
+  const diffStackSpec = { ...spec, parts: [spec.parts[0], { ...spec.parts[1], center: [-30, 0, 0], stack: 1 }] };
+  assert.deepEqual(detectInterpenetrations(diffStackSpec), [], 'explicitly stacked parts do not warn');
+
+  // 3. Registered 3D engine demo (`techniques/3d-engine/demo/animation.json`) passes anti-bake and mobile health with zero merge paths / expressions
+  const demoDoc = JSON.parse(await fs.readFile(path.join(STUDIO_ROOT, 'techniques', '3d-engine', 'demo', 'animation.json'), 'utf8'));
+  const demoHealth = inspectLottieHealth(demoDoc, []);
+  assert.equal(demoHealth.antiBakePass, true, '3D engine demo passes anti-bake');
+  assert.equal(demoHealth.mobileReady, true, '3D engine demo is mobileReady');
+  assert.equal(demoHealth.issues.filter((i) => i.severity === 'error').length, 0, '3D engine demo has zero health errors');
+  const demoJson = JSON.stringify(demoDoc);
+  assert.ok(!demoJson.includes('"x":"'), '3D engine demo uses zero JS expressions');
+  assert.ok(!demoJson.includes('"ty":"mm"'), '3D engine demo contains zero merge paths');
 });

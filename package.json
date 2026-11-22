@@ -16,6 +16,8 @@
     "new-lottie": "node tools/new-lottie.mjs",
     "verify-lottie": "node tools/verify-lottie.mjs",
     "verify-shapes": "node tools/verify-shapes.mjs",
+    "verify-3d": "node tools/verify-turntable.mjs",
+    "verify-turntable": "node tools/verify-turntable.mjs",
     "ref": "node tools/ref.mjs",
     "done": "node tools/done.mjs",
     "test:lottie": "npm run build && node --test tests/lottie-pipeline.test.mjs",

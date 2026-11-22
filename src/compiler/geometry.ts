@@ -272,6 +272,23 @@ export function toLottiePath(shape: Shape): LottieBezierPath {
   };
 }
 
+/** All non-empty closed contours of a shape (outer + any holes) as Lottie bezier paths, largest area first. */
+export function toLottiePaths(shape: Shape): LottieBezierPath[] {
+  const raw: paper.Path[] =
+    shape instanceof paper.CompoundPath
+      ? (shape.children.filter((c) => Math.abs((c as paper.Path).area) > 1e-4) as paper.Path[])
+      : Math.abs((shape as paper.Path).area) > 1e-4
+        ? [shape as paper.Path]
+        : [];
+  raw.sort((a, b) => Math.abs(b.area) - Math.abs(a.area));
+  return raw.map((path) => ({
+    c: path.closed,
+    v: path.segments.map((s) => [s.point.x, s.point.y]),
+    i: path.segments.map((s) => [s.handleIn.x, s.handleIn.y]),
+    o: path.segments.map((s) => [s.handleOut.x, s.handleOut.y]),
+  }));
+}
+
 /** A Lottie bezier path back into a shape (to measure it or combine it with booleans). */
 export function fromLottiePath(p: LottieBezierPath): Shape {
   ensurePaper();
@@ -280,6 +297,21 @@ export function fromLottiePath(p: LottieBezierPath): Shape {
     closed: p.c,
     insert: false,
   });
+}
+
+/** Multiple Lottie bezier contours (e.g. outer + holes) into a single CompoundPath shape. */
+export function fromLottiePaths(paths: LottieBezierPath[]): Shape {
+  ensurePaper();
+  if (paths.length === 1) return fromLottiePath(paths[0]!);
+  const cp = new paper.CompoundPath({ insert: false });
+  for (const p of paths) cp.addChild(fromLottiePath(p));
+  return cp;
+}
+
+/** SVG path data (`M … A … Z`) as a shape; arcs become exact cubic segments of at most 90°. */
+export function fromSvgPath(d: string): Shape {
+  ensurePaper();
+  return new paper.CompoundPath({ pathData: d, insert: false }).reduce({}) as Shape;
 }
 
 export function toSvgPath(shape: Shape): string {

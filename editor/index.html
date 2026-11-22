@@ -24,7 +24,11 @@
   <span id="lottieHealth" class="health-pill" hidden title="Lottie mobile compatibility & Anti-Bake keyframe health"></span>
   <div class="spacer"></div>
   <div id="lottieExportGroup" hidden>
-    <select id="lottieScale" title="Filter-to-Raster bake scale for SVG glow/shadow/blur layers"><option value="2">@2x FX</option><option value="3">@3x FX</option><option value="1">@1x FX</option></select>
+    <div id="lottieFxSize" hidden title="Base viewport resolution for embedded raster FX images (all vectors stay lossless at any size)">
+      <span class="fx-tag">FX</span>
+      <input type="range" id="lottieFxSlider" min="100" max="1500" step="20" value="500">
+      <span id="lottieFxLbl">500×500</span>
+    </div>
     <select id="lottieRasterFmt" title="Raster image format for baked SVG filters"><option value="png">PNG</option><option value="webp">WebP</option></select>
     <button id="lottieExportBtn" title="Run Filter-to-Raster bake and export .lottie + .json">⤓ Export .lottie</button>
     <a id="lottieDownloadJson" class="dl-link" hidden download>.json</a>

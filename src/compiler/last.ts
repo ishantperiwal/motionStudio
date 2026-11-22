@@ -268,7 +268,7 @@ function collectLayerTracks(layer: LottieLayer): LottieKeyframe<unknown>[][] {
 const MAX_KEYFRAMES_PER_SEC = 8;
 const MAX_NON_HOLD_PER_1S_WINDOW = 10;
 
-function measureTrackDensity(kfs: LottieKeyframe<unknown>[], fps: number): {
+export function measureTrackDensity(kfs: LottieKeyframe<unknown>[], fps: number): {
   count: number;
   kfPerSec: number;
   maxInWindow: number;

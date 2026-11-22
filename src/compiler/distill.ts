@@ -447,26 +447,33 @@ function solveBezierU1D(tau: number, ox: number, ix: number): number {
 }
 
 function fitBezierSegment1D(t0: number, t1: number, fn: (t: number) => number) {
-  const v0 = fn(t0);
-  const v1 = fn(t1);
-  const dv = v1 - v0;
   const n = Math.max(2, Math.round(t1 - t0));
   const samples: Array<[number, number]> = [];
   for (let i = 1; i < n; i++) {
     const tau = i / n;
     samples.push([tau, fn(t0 + (t1 - t0) * tau)]);
   }
+  const fit = fitEaseToSamples(samples, fn(t0), fn(t1));
+  return { ...fit, worstT: Math.round(t0 + fit.worstTau * (t1 - t0)) };
+}
+
+/**
+ * The cubic-bezier ease (x handles in [0.05, 0.95], free y handles) that best carries a value from `v0` to `v1`
+ * through `samples` ([0–1 time, value] pairs inside the segment), with its worst error and where it is.
+ */
+export function fitEaseToSamples(samples: Array<[number, number]>, v0: number, v1: number) {
+  const dv = v1 - v0;
   if (Math.abs(dv) < 0.05 || samples.length === 0) {
     let worstErr = 0;
-    let worstT = Math.round((t0 + t1) / 2);
+    let worstTau = 0.5;
     for (const [tau, val] of samples) {
       const err = Math.abs(v0 + dv * tau - val);
       if (err > worstErr) {
         worstErr = err;
-        worstT = Math.round(t0 + tau * (t1 - t0));
+        worstTau = tau;
       }
     }
-    return { ox: 0.33, oy: 0.33, ix: 0.67, iy: 0.67, worstErr, worstT };
+    return { ox: 0.33, oy: 0.33, ix: 0.67, iy: 0.67, worstErr, worstTau };
   }
 
   const score = (ox: number, ix: number) => {
@@ -494,17 +501,17 @@ function fitBezierSegment1D(t0: number, t1: number, fn: (t: number) => number) {
     }
     let mse = 0;
     let worstErr = 0;
-    let worstT = Math.round((t0 + t1) / 2);
+    let worstTau = 0.5;
     for (let j = 0; j < us.length; j++) {
       const pred = v0 + dv * evalCubicBezier1D(us[j]!, oy, iy);
       const err = Math.abs(pred - samples[j]![1]);
       mse += err * err;
       if (err > worstErr) {
         worstErr = err;
-        worstT = Math.round(t0 + samples[j]![0] * (t1 - t0));
+        worstTau = samples[j]![0];
       }
     }
-    return { ox, oy, ix, iy, mse, worstErr, worstT };
+    return { ox, oy, ix, iy, mse, worstErr, worstTau };
   };
 
   let best = score(0.33, 0.67);

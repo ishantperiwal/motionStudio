@@ -362,6 +362,205 @@ export interface ShapeMorphParams {
   stops: ShapeMorphStop[];
   /** vertices per pose after matching (default 96: enough that points spread evenly over every pose) */
   points?: number;
+  /**
+   * 'auto' (default): match any poses with `matchPaths`. 'vertices': the poses are built with the same vertices in
+   * the same order (a parametric shape), so vertex j blends with vertex j as it is. Use it when a pose's parts grow
+   * from or shrink to nothing (a hole closing), where matching by arc length would slide points around the outline.
+   */
+  match?: 'auto' | 'vertices';
+  /** which `sh` path inside the layer to morph (default 0; > 0 for hole contours in a compound shape) */
+  pathIndex?: number;
+}
+
+// A small 3D model spinning about the vertical axis, compiled into native layers (`turntable.ts`). Model space:
+// x right, y down, z toward the camera, in px, around `origin` on the stage. Paints are SVG fills: a colour or
+// `url(#gradient)` from the SVG's <defs>, drawn at the part's home (the stage point origin + (0, part y)).
+export type TurntablePaint = string;
+
+export interface TurntableAngleStop {
+  t: number;
+  /** turn angle in degrees: 0 is the front view; growing angles swing the +x side toward the camera */
+  deg: number;
+  /** ease to the next stop (token or bezier); default linear */
+  ease?: string | CubicBezierTuple;
+}
+
+/**
+ * How a part's faces are lit: fully lit from facing ratio `full` (default: the turntable's `light`, 0.6) and fading
+ * into their side colour toward edge-on. With `into` / `outOf` (lathe ends) the fade is keyed exactly with these
+ * eases, into edge-on and out of it, instead of a fitted smoothstep.
+ */
+export interface TurntableLight {
+  full?: number;
+  into?: CubicBezierTuple;
+  outOf?: CubicBezierTuple;
+}
+
+/** One end of a disc: a plain face (`paint`) or your own face-on artwork (`art`: SVG markup drawn at the home point), optionally with a recess. */
+export interface TurntableDiscEnd {
+  /** layer name for this end (default "outer" / "inner") */
+  name?: string;
+  paint?: TurntablePaint;
+  art?: string;
+  /** a round opening in the face: its inner wall and, `depth` deeper, its base slide against the opening as it turns */
+  recess?: { radius: number; depth: number; wall: TurntablePaint; base: TurntablePaint };
+}
+
+/** One point along a lathe's profile: `[x, r]` or `{ x, r, in?, out? }` with relative cubic handles in (x, r) space. */
+export type TurntableProfilePoint =
+  | [number, number]
+  | { x: number; r: number; in?: [number, number]; out?: [number, number] };
+
+/**
+ * A lathe: a surface of revolution spun about its local x axis — either a rounded-rim cylinder shorthand
+ * (`radius`, `depth`, `rim`), or an arbitrary `profile` of `[x, r]` points (cone, cup, bottle, vase, beveled button),
+ * with optional `innerProfile` for open vessels. `disc` is the same part.
+ */
+export interface TurntableDisc {
+  type: 'disc' | 'lathe';
+  name: string;
+  /** centre in model px */
+  center: [number, number, number];
+  /** turns the part (degrees about model x, then y, then z) before the model turns: its axis is then rotation · x */
+  rotation?: [number, number, number];
+  /** cylinder shorthand: outer radius (omit when using `profile`) */
+  radius?: number;
+  /** cylinder shorthand: length along its axis (omit when using `profile`) */
+  depth?: number;
+  /** cylinder shorthand: rounded rim radius: the painted ends are this much smaller than the disc */
+  rim?: number;
+  /** general lathe outer profile along local x (from −x end to +x end, r >= 0) */
+  profile?: TurntableProfilePoint[];
+  /** optional inner cavity profile for open vessels (e.g. a cup): runs from inner floor to the open rim */
+  innerProfile?: TurntableProfilePoint[];
+  /** paint for the visible inner wall of an open vessel (defaults to `side`) */
+  innerPaint?: TurntablePaint;
+  /** optional paint for the inner floor of an open vessel (defaults to `innerPaint`) */
+  innerBase?: TurntablePaint;
+  /** the side wall, and the colour an end fades into as it turns edge-on */
+  side: TurntablePaint;
+  /** the end away from the turning axis (the +x end for a disc on the axis); for a lathe, prefer `ends` */
+  outer?: TurntableDiscEnd;
+  inner?: TurntableDiscEnd;
+  /** its +x and −x ends (local axis), used before `outer` / `inner` */
+  ends?: { pos?: TurntableDiscEnd; neg?: TurntableDiscEnd };
+  /** paint layer: lower stacks always paint under higher ones; parts in one stack paint far to near (default 0) */
+  stack?: number;
+  /** optional 3D point in model px used for depth sorting instead of `center` (for attachments mounted off-centre on a tall face under camera tilt) */
+  sortAnchor?: [number, number, number];
+  light?: TurntableLight;
+  /** morph poses (degrees, 0–90) to use instead of letting the kit choose them; 0°, 90° and any angle a notch shuts are always added */
+  poses?: number[];
+}
+
+/**
+ * Any closed SVG outline (non-symmetric and holes allowed) in the part's local x–y plane, extruded by `depth`
+ * along its local z, at any centre, rotation, axis and tilt. `strip` is an alias for backwards compatibility.
+ */
+export interface TurntableExtrude {
+  type: 'extrude' | 'strip';
+  name: string;
+  /** SVG path data in local x–y px: one outer closed contour, optionally followed by hole contours */
+  outline: string;
+  /** centre in model px (default [0, 0, z ?? 0]) */
+  center?: [number, number, number];
+  /** turns the part (degrees about model x, then y, then z) before the model turns */
+  rotation?: [number, number, number];
+  /** legacy alias for center: [0, 0, z] when `center` is omitted */
+  z?: number;
+  depth: number;
+  /** the two flat faces (+z front, −z back, lit) */
+  face: TurntablePaint;
+  /** the thickness: the whole silhouette, under the faces */
+  edge: TurntablePaint;
+  /** the thickness lit as the faces turn away (side-on, its outer surface faces the camera) */
+  edgeLit?: TurntablePaint;
+  /** strongest edgeLit opacity (default 70) */
+  edgeLitOpacity?: number;
+  stack?: number;
+  /** optional 3D point in model px used for depth sorting instead of `center` */
+  sortAnchor?: [number, number, number];
+  light?: TurntableLight;
+  /** morph poses (degrees, 0–90) to use instead of letting the kit choose them (for upright symmetric strips) */
+  poses?: number[];
+}
+
+export type TurntableStrip = TurntableExtrude;
+
+/**
+ * A convex polyhedron (pyramid, box, prism, gem): vertices and faces (vertex indices around each face, either way
+ * round). Each face is one flat layer moved by an exact affine transform, hidden while it faces away and lit by
+ * how much it faces the camera (its colour runs from `shade` edge-on to `paint` facing). Colours are #hex.
+ */
+export interface TurntablePoly {
+  type: 'poly';
+  name: string;
+  center: [number, number, number];
+  rotation?: [number, number, number];
+  /** vertices in the part's own px, around its centre */
+  vertices: Array<[number, number, number]>;
+  faces: number[][];
+  /** lit colour, one for all faces or one per face */
+  paint: string | string[];
+  /** colour edge-on, one for all faces or one per face */
+  shade: string | string[];
+  stack?: number;
+  /** optional 3D point in model px used for depth sorting instead of `center` */
+  sortAnchor?: [number, number, number];
+  light?: TurntableLight;
+}
+
+/**
+ * A sphere: always projects to a circle (scaled by perspective), with a world-space directional light that moves
+ * a half-ellipse terminator (`shade`) and soft radial-gradient `highlight` across the surface as the model turns.
+ * Surface art wrapped around a sphere is not supported in native Lottie.
+ */
+export interface TurntableSphere {
+  type: 'sphere';
+  name: string;
+  center: [number, number, number];
+  radius: number;
+  /** lit hemisphere colour */
+  paint: TurntablePaint;
+  /** shaded hemisphere colour (the moving terminator crescent/gibbous layer) */
+  shade: TurntablePaint;
+  /** soft radial-gradient specular highlight colour (default '#FFFFFF'; set `false` to disable) */
+  highlight?: string | false;
+  /** peak highlight opacity 0–100 (default 55) */
+  highlightOpacity?: number;
+  /** optional per-sphere world-space light direction (overrides `spec.lightDir`) */
+  lightDir?: [number, number, number];
+  stack?: number;
+  /** optional 3D point in model px used for depth sorting instead of `center` */
+  sortAnchor?: [number, number, number];
+}
+
+export type TurntablePart = TurntableDisc | TurntableStrip | TurntablePoly | TurntableSphere;
+
+export interface TurntableParams {
+  kind: 'turntable';
+  /** layer id prefix: layers are `<id>-…`, their shared null rig `<id>.rig` */
+  id: string;
+  /** stage point the turning axis passes through (model 0, 0, 0) */
+  origin: [number, number];
+  angle: TurntableAngleStop[];
+  parts: TurntablePart[];
+  /** the axis the model turns about, in model space (y down; default [0, -1, 0], up: the +x side swings toward the camera) */
+  axis?: [number, number, number];
+  /** camera tilt in degrees after the turn: positive looks down onto the top (default 0) */
+  tilt?: number;
+  /** perspective focal length in px: nearer parts draw larger, about their own centre. Omit for orthographic. */
+  focal?: number;
+  /** the null rig every layer hangs from (anchored at `origin`): an entrance, a bob */
+  rig?: { position?: LottiePositionProp; scale?: LottieProp<number[]> };
+  /** facing ratio at which a face is fully lit (default 0.6) */
+  light?: number;
+  /** world-space directional light vector for spheres (model space, y down, z toward camera; default [-0.55, -0.55, 0.63]) */
+  lightDir?: [number, number, number];
+  /** px a morph's in-between frames may stray from the true outline before it gets another pose (default 0.75) */
+  tol?: number;
+  ip?: number;
+  op?: number;
 }
 
 export type MotionPrimitiveSpec =
@@ -371,7 +570,8 @@ export type MotionPrimitiveSpec =
   | Faux3DFlipParams
   | SquashAndStretchParams
   | KeyframeTrackParams
-  | ShapeMorphParams;
+  | ShapeMorphParams
+  | TurntableParams;
 
 // ---------------------------------------------------------------------------
 // Curve Distillation
@@ -482,7 +682,8 @@ export interface LottieHealthReport {
 }
 
 export interface RasterBakeOptions {
-  scale?: 1 | 2 | 3;
+  /** Raster bake scale relative to stage coordinates (0.125..3; e.g. targetViewportPx / max(w, h)). Default: 2. */
+  scale?: number;
   format?: 'png' | 'webp';
   quality?: number;
   cacheDir?: string;

@@ -8,4 +8,5 @@ export * from './distill.js';
 export * from './rasterBaker.js';
 export * from './verify.js';
 export * from './composition.js';
+export * from './turntable.js';
 export * as geometry from './geometry.js';

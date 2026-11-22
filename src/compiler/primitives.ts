@@ -1,4 +1,5 @@
 import { matchPaths } from './geometry.js';
+import { applyTurntable } from './turntable.js';
 import {
   clampBezierX,
   resolveDurationFrames,
@@ -759,10 +760,22 @@ function findShapeItem<T extends LottieShapeItem['ty']>(
   return null;
 }
 
+function findAllShapeItems(items: unknown[], ty: string, out: Record<string, unknown>[] = []): Record<string, unknown>[] {
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as Record<string, unknown>;
+    if (item.ty === ty) out.push(item);
+    if (item.ty === 'gr' && Array.isArray(item.it)) {
+      findAllShapeItems(item.it, ty, out);
+    }
+  }
+  return out;
+}
+
 /**
- * Morphs a shape layer's first path (and gradient colours) through a list of poses: one keyframe per pose,
- * holds as hold keyframes. Poses may have any vertex counts: they're matched exactly (`matchPaths`) so
- * native players interpolate them.
+ * Morphs a shape layer's path (default first path, or `pathIndex`) (and gradient colours) through a list of poses:
+ * one keyframe per pose, holds as hold keyframes. Poses may have any vertex counts: they're matched exactly
+ * (`matchPaths`) so native players interpolate them.
  */
 export function applyShapeMorph(
   doc: LottieDocument,
@@ -772,11 +785,14 @@ export function applyShapeMorph(
   const layer = findLayer(doc, params.layerId);
   if (layer.ty !== 4) throw new Error(`shapeMorph: "${params.layerId}" is not a shape layer`);
   const shapes = (layer as LottieShapeLayer).shapes;
-  const sh = findShapeItem(shapes, 'sh');
-  if (!sh) throw new Error(`shapeMorph: "${params.layerId}" has no path to morph`);
+  const allSh = findAllShapeItems(shapes, 'sh');
+  const sh = allSh[params.pathIndex ?? 0];
+  if (!sh) throw new Error(`shapeMorph: "${params.layerId}" has no path #${params.pathIndex ?? 0} to morph`);
   if (params.stops.length < 2) throw new Error('shapeMorph: needs at least two stops');
-  // same vertex count, winding and start point for every pose, by exact curve splitting
-  const matched = matchPaths(params.stops.map((s) => s.path), params.points ?? 96);
+  // same vertex count, winding and start point for every pose, by exact curve splitting (or as built, vertex for vertex)
+  const counts = new Set(params.stops.map((s) => s.path.v.length));
+  if (params.match === 'vertices' && counts.size > 1) throw new Error(`shapeMorph: match 'vertices' needs poses with the same vertex count (got ${[...counts].join(', ')})`);
+  const matched = params.match === 'vertices' ? params.stops.map((s) => s.path) : matchPaths(params.stops.map((s) => s.path), params.points ?? 96);
   const stops = params.stops.map((s, idx) => ({ ...s, path: matched[idx]! }));
   const roundPath = (p: LottieBezierPath): LottieBezierPath => ({
     c: p.c,
@@ -839,5 +855,7 @@ export function applyMotionPrimitive(
       return applyKeyframeTrack(doc, spec);
     case 'shapeMorph':
       return applyShapeMorph(doc, spec, tokens);
+    case 'turntable':
+      return applyTurntable(doc, spec, tokens) as unknown as Record<string, unknown>;
   }
 }

@@ -164,18 +164,36 @@ export async function mountLottieStage({ id, container, animationUrl, filtersUrl
     }
   }
 
-  async function setPreviewMode(mode) {
-    if (mode === previewMode) return previewMode;
-    previewMode = mode;
+  let bakedKey = '';
+  let lastBakedInfo = null;
+  async function setPreviewMode(mode, opts = {}) {
+    const fxRes = Number(opts.fxRes);
+    const scale = Math.max(0.125, Math.min(3, Number(opts.scale) || 2));
+    const rasterFmt = opts.rasterFmt === 'webp' ? 'webp' : 'png';
+    const nextKey = mode === 'baked' ? `${Number.isFinite(fxRes) && fxRes > 0 ? `r${Math.round(fxRes)}` : `s${scale}`}:${rasterFmt}` : '';
+    if (mode === previewMode && nextKey === bakedKey) return lastBakedInfo || { mode: previewMode };
     if (mode === 'baked') {
-      const res = await fetch(`/api/lottie/preview-baked?scene=${encodeURIComponent(id)}&scale=2`, { cache: 'no-store' });
+      const q = Number.isFinite(fxRes) && fxRes > 0
+        ? `fxRes=${Math.round(fxRes)}`
+        : `scale=${scale}`;
+      const res = await fetch(
+        `/api/lottie/preview-baked?scene=${encodeURIComponent(id)}&${q}&rasterFmt=${rasterFmt}`,
+        { cache: 'no-store' },
+      );
       if (!res.ok) throw new Error('Failed to build raster-baked preview');
       const baked = await res.json();
+      previewMode = 'baked';
+      bakedKey = nextKey;
+      lastBakedInfo = { mode: 'baked', bakedBytes: baked.bakedBytes || 0, bakedCount: baked.bakedCount || 0 };
       await mountData(baked.doc);
+      return lastBakedInfo;
     } else {
+      previewMode = 'live';
+      bakedKey = '';
+      lastBakedInfo = { mode: 'live', bakedBytes: 0, bakedCount: 0 };
       await mountData(animData);
+      return lastBakedInfo;
     }
-    return previewMode;
   }
 
   function getLayerElementRects() {
